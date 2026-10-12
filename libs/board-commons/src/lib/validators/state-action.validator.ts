@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 
 export const stateAction = z.object({
   op: z.enum(['add', 'remove', 'patch']),

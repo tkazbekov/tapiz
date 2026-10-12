@@ -1,11 +1,11 @@
-import { tAuth } from './trpc.js';
+import { middleware } from './trpc.js';
 import { AppContext } from './app.context.js';
 import { TRPCError } from '@trpc/server';
 
 export const rateLimitedMiddleware = (
   rateLimitName: keyof AppContext['rateLimits'],
 ) =>
-  tAuth.middleware(async ({ ctx, next }) => {
+  middleware(async ({ ctx, next }) => {
     const checkRateLimit = ctx.rateLimits[rateLimitName];
 
     if (!checkRateLimit) {

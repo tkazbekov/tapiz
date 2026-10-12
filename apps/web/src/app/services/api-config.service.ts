@@ -1,5 +1,5 @@
 import { inject, Injectable } from '@angular/core';
-import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
+import { createTRPCClient, httpBatchLink } from '@trpc/client';
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import type { AppRouter } from '@tapiz/api/app/trpc-type';
 import { ConfigService } from './config.service';
@@ -13,19 +13,20 @@ export class APIConfigService {
   #configService = inject(ConfigService);
   #store = inject(Store);
   #wsService = inject(WsService);
-  #config = createTRPCProxyClient<AppRouter>({
+  #config = createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
         url: this.#configService.config.API_URL + '/trpc',
         fetch: async (url, options) => {
           // update api-rest-interceptor.service.ts
+          // Keep tRPC's own headers (content-type is only set for non-GET).
+          const headers = new Headers(options?.headers);
+          headers.set('correlation-id', this.#wsService.correlationId);
+
           const response = await fetch(url, {
             ...options,
             credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              'correlation-id': this.#wsService.correlationId,
-            },
+            headers,
           });
 
           if (response.status === 401) {

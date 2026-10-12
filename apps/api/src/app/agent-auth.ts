@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 
 export interface AgentAuthEnvironment {
   [key: string]: string | undefined;
@@ -22,7 +22,7 @@ interface AgentSessionRouteDependencies {
 }
 
 const agentLoginBody = z.object({
-  boardId: z.string().uuid(),
+  boardId: z.uuid(),
 });
 
 function isLocalAgentLoginEnabled(environment: AgentAuthEnvironment) {

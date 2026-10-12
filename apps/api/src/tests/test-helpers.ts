@@ -5,14 +5,11 @@ import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import { Server as WsServer } from 'socket.io';
 import customParser from 'socket.io-msgpack-parser';
-import { initTRPC } from '@trpc/server';
+import { createCallerFactory } from '../app/trpc.js';
+import type { AppContext } from '../app/app.context.js';
 import { Server } from '../app/server.js';
 import db from '../app/db/index.js';
 import { io } from 'socket.io-client';
-
-const t = initTRPC.context().create();
-
-const { createCallerFactory } = t;
 
 export async function errorCall(call: () => Promise<unknown>) {
   try {
@@ -56,12 +53,15 @@ export const createMultipleUsers = async (size = usersTest.length) => {
   }
 };
 
+// Test double: callers only need `user`; req/res/app/rateLimits are not wired.
+export const createTestContext = (
+  user: ReturnType<typeof getAuth> | null,
+): AppContext => ({ user }) as unknown as AppContext;
+
 export const getUserCaller = (userIndex: number) => {
   const createCaller = createCallerFactory(appRouter);
 
-  return createCaller({
-    user: getAuth(userIndex),
-  });
+  return createCaller(createTestContext(getAuth(userIndex)));
 };
 
 export const initTestServer = async (port: number): Promise<Server> => {

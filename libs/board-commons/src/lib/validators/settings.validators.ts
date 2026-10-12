@@ -1,12 +1,14 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { NodeValidator } from '../models/node.model.js';
 import { colorValidator } from './color.validator.js';
 
-export const settingsValidator = z.object({
-  readOnly: z.boolean().default(false),
-  anonymousMode: z.boolean().default(false),
-  hideNoteAuthor: z.boolean().default(false),
-  allowPublicPosts: z.boolean().default(false),
+// No defaults here: zod 4 fills defaults of .partial() fields, which would
+// reset unrelated settings on every patch.
+const settingsBase = z.object({
+  readOnly: z.boolean(),
+  anonymousMode: z.boolean(),
+  hideNoteAuthor: z.boolean(),
+  allowPublicPosts: z.boolean(),
   backgroundColor: z.string().refine(colorValidator).optional(),
   dotsColor: z.string().refine(colorValidator).optional(),
   boardStartingView: z
@@ -16,6 +18,13 @@ export const settingsValidator = z.object({
       zoom: z.number(),
     })
     .optional(),
+});
+
+export const settingsValidator = settingsBase.extend({
+  readOnly: z.boolean().default(false),
+  anonymousMode: z.boolean().default(false),
+  hideNoteAuthor: z.boolean().default(false),
+  allowPublicPosts: z.boolean().default(false),
 });
 
 export const SETTINGS_VALIDATOR: NodeValidator = {
@@ -66,7 +75,7 @@ export const SETTINGS_VALIDATOR: NodeValidator = {
       };
     }
 
-    const validation = settingsValidator.partial().safeParse(data.content);
+    const validation = settingsBase.partial().safeParse(data.content);
 
     if (validation.success) {
       return {

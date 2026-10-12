@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import {
   protectedProcedure,
   router,
@@ -29,7 +29,7 @@ export const teamRouter = router({
   invitations: teamAdminProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query(async (req) => {
@@ -40,7 +40,7 @@ export const teamRouter = router({
   members: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query(async (req) => {
@@ -51,8 +51,8 @@ export const teamRouter = router({
   invite: teamAdminProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
-        email: z.string().email().max(256),
+        teamId: z.uuid(),
+        email: z.email().max(256),
         role: z.enum(['admin', 'member']),
       }),
     )
@@ -116,7 +116,7 @@ export const teamRouter = router({
       return invitation;
     }),
   delete: teamAdminProcedure
-    .input(z.object({ teamId: z.string().uuid() }))
+    .input(z.object({ teamId: z.uuid() }))
     .mutation(async (req) => {
       const boards = await db.board.getBoardsByTeam(req.input.teamId);
 
@@ -188,7 +188,7 @@ export const teamRouter = router({
   deleteMember: teamAdminProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
         memberId: z.string().max(256),
       }),
     )
@@ -223,7 +223,7 @@ export const teamRouter = router({
   leave: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .mutation(async (req) => {
@@ -238,7 +238,7 @@ export const teamRouter = router({
   rename: teamAdminProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
         name: z.string().min(1).max(255),
       }),
     )
@@ -263,7 +263,7 @@ export const teamRouter = router({
   editInviteRole: protectedProcedure
     .input(
       z.object({
-        inviteId: z.string().uuid(),
+        inviteId: z.uuid(),
         role: z.enum(['member', 'admin']),
       }),
     )
@@ -293,7 +293,7 @@ export const teamRouter = router({
   spaces: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query(async (req): Promise<Space[]> => {
@@ -315,9 +315,9 @@ export const teamRouter = router({
   createSpace: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
         name: z.string().min(1).max(255),
-        boards: z.array(z.string().uuid()).default([]),
+        boards: z.array(z.uuid()).default([]),
       }),
     )
     .mutation(async (req): Promise<Space> => {
@@ -365,9 +365,9 @@ export const teamRouter = router({
   updateSpace: protectedProcedure
     .input(
       z.object({
-        spaceId: z.string().uuid(),
+        spaceId: z.uuid(),
         name: z.string().min(1).max(255),
-        boards: z.array(z.string().uuid()).default([]),
+        boards: z.array(z.uuid()).default([]),
       }),
     )
     .mutation(async (req): Promise<Space> => {
@@ -418,7 +418,7 @@ export const teamRouter = router({
   deleteSpace: protectedProcedure
     .input(
       z.object({
-        spaceId: z.string().uuid(),
+        spaceId: z.uuid(),
       }),
     )
     .mutation(async (req) => {

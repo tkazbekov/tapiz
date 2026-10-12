@@ -75,7 +75,7 @@ describe('user', () => {
       res: {
         setCookie: vi.fn(),
       },
-    } as Parameters<typeof createAuthContext>[0]);
+    } as unknown as Parameters<typeof createAuthContext>[0]);
 
     expect(firstContext.user?.sub).toEqual(getAuth(9).sub);
 
@@ -90,7 +90,7 @@ describe('user', () => {
       res: {
         setCookie: vi.fn(),
       },
-    } as Parameters<typeof createAuthContext>[0]);
+    } as unknown as Parameters<typeof createAuthContext>[0]);
     const newTokenContext = await createAuthContext({
       req: {
         cookies: {},
@@ -101,7 +101,7 @@ describe('user', () => {
       res: {
         setCookie: vi.fn(),
       },
-    } as Parameters<typeof createAuthContext>[0]);
+    } as unknown as Parameters<typeof createAuthContext>[0]);
 
     expect(oldTokenContext.user).toBeNull();
     expect(newTokenContext.user?.sub).toEqual(getAuth(9).sub);

@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { protectedProcedure, publicProcedure, router } from '../trpc.js';
 import db from '../db/index.js';
 import { getUserInvitationsByEmail } from '../db/user-db.js';
@@ -123,7 +123,7 @@ export const userRouter = router({
     return [...invitationsEmail, ...invitations];
   }),
   acceptInvite: protectedProcedure
-    .input(z.object({ inviteId: z.string().uuid() }))
+    .input(z.object({ inviteId: z.uuid() }))
     .mutation(async (req) => {
       const result = await db.user.acceptInvitation(
         req.ctx.user.sub,
@@ -140,7 +140,7 @@ export const userRouter = router({
       };
     }),
   cancelInvite: protectedProcedure
-    .input(z.object({ inviteId: z.string().uuid() }))
+    .input(z.object({ inviteId: z.uuid() }))
     .mutation(async (req) => {
       const invitation = await db.user.getInvitation(req.input.inviteId);
 
@@ -187,10 +187,8 @@ export const userRouter = router({
       };
     }),
   logout: publicProcedure.query(async (req) => {
-    const mayLogout: { user?: { sub: string } } = req.ctx;
-
-    if (mayLogout.user) {
-      await lucia.invalidateUserSessions(mayLogout.user.sub);
+    if (req.ctx.user) {
+      await lucia.invalidateUserSessions(req.ctx.user.sub);
     }
 
     return {

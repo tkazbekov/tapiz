@@ -1,4 +1,3 @@
-import { inferAsyncReturnType } from '@trpc/server';
 import { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
 import { getUser } from './db/user-db.js';
 import { lucia, validateSession } from './auth.js';
@@ -9,10 +8,11 @@ import { authenticateApiToken } from './authenticate-api-token.js';
 import '@fastify/rate-limit';
 import '@fastify/cookie';
 
-export async function createAuthContext({
-  req,
-  res,
-}: CreateFastifyContextOptions) {
+// `info` (TRPCRequestInfo) is only available inside tRPC requests; non-tRPC
+// callers (file uploads, MCP) only have req/res.
+type ContextRequestOptions = Pick<CreateFastifyContextOptions, 'req' | 'res'>;
+
+export async function createAuthContext({ req, res }: ContextRequestOptions) {
   function toAuthUser(dbUser: Awaited<ReturnType<typeof getUser>>) {
     if (!dbUser) {
       return null;
@@ -88,7 +88,7 @@ export async function createAuthContext({
 export async function createAppContext(
   app: FastifyInstance,
   rateLimits: Record<string, ReturnType<FastifyInstance['createRateLimit']>>,
-  { req, res }: CreateFastifyContextOptions,
+  { req, res }: ContextRequestOptions,
 ) {
   const authContext = await createAuthContext({ req, res });
 
@@ -100,4 +100,4 @@ export async function createAppContext(
     ...authContext,
   };
 }
-export type AppContext = inferAsyncReturnType<typeof createAppContext>;
+export type AppContext = Awaited<ReturnType<typeof createAppContext>>;

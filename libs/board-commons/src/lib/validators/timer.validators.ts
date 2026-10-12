@@ -1,8 +1,8 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { NodeValidator } from '../models/node.model.js';
 
 const timer = z.object({
-  startTime: z.string().datetime().optional(),
+  startTime: z.iso.datetime().optional(),
   remainingTime: z.number().min(0).optional(),
   active: z.boolean().optional(),
 });

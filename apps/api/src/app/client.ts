@@ -8,7 +8,7 @@ import { Server } from './server.js';
 import { type Socket } from 'socket.io';
 import db from './db/index.js';
 import { validation } from './validation.js';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { haveAccess } from './db/board-db.js';
 import { haveAccessTeam } from './db/team-db.js';
 
@@ -254,7 +254,7 @@ export class Client {
   }
 
   private async join(message: { boardId: string }) {
-    const result = z.string().uuid().safeParse(message.boardId);
+    const result = z.uuid().safeParse(message.boardId);
 
     if (!result.success) {
       this.unauthorizedClose();

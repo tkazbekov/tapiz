@@ -1,5 +1,5 @@
 import colorString from 'color-string';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 
 export function colorValidator(val: string) {
   try {

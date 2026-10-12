@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { NodeValidator } from '../models/node.model.js';
 import { EstimationResult } from '../models/estimation.model.js';
 import { CommonBoardValidation } from './common-board-validation.js';
@@ -70,7 +70,7 @@ const ESTIMATION_VALIDATOR: NodeValidator = {
 
 const story = z.array(
   z.object({
-    id: z.string().uuid(),
+    id: z.uuid(),
     title: z.string().max(1000),
     description: z.string().max(5000),
     show: z.boolean(),
@@ -147,7 +147,7 @@ const result = z.object({
   results: z.array(
     z.object({
       selection: z.string().max(100),
-      storyId: z.string().uuid(),
+      storyId: z.uuid(),
     }),
   ),
   userId: z.string(),

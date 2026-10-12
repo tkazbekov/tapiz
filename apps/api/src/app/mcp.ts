@@ -1,14 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import {
-  McpServer,
-  type ToolCallback,
-} from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type {
-  CallToolResult,
-  ToolAnnotations,
-} from '@modelcontextprotocol/sdk/types.js';
 import type { Socket } from 'socket.io';
 import { z } from 'zod';
 import {
@@ -42,11 +35,11 @@ type CocomaterialNodeInput = {
   kind?: 'vector' | 'image';
 };
 
-const boardIdSchema = z.string().uuid();
+const boardIdSchema = z.uuid();
 const nodeSchema = z.object({
   id: z.string().min(1).max(255),
   type: z.string().min(1).max(255),
-  content: z.record(z.unknown()),
+  content: z.record(z.string(), z.unknown()),
   children: z.array(z.unknown()).optional(),
 });
 const actionSchema = z.object({
@@ -65,7 +58,6 @@ const cocomaterialPositionSchema = z.object({
   y: z.number(),
 });
 const cocomaterialUrlSchema = z
-  .string()
   .url()
   .max(2000)
   .refine((url) => {
@@ -286,28 +278,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       instructions: TAPIZ_MCP_INSTRUCTIONS,
     },
   );
-  // Explicit type arguments avoid TS2589 (excessively deep instantiation) when
-  // the SDK infers registerTool generics from a zod 3 schema; the callback is
-  // narrowed from z.infer to the SDK's conditional ToolCallback type.
-  const registerTool = <TSchema extends z.ZodTypeAny>(
-    name: string,
-    config: {
-      title: string;
-      description: string;
-      inputSchema: TSchema;
-      annotations: ToolAnnotations;
-    },
-    callback: (
-      args: z.infer<TSchema>,
-    ) => CallToolResult | Promise<CallToolResult>,
-  ) =>
-    server.registerTool<z.ZodTypeAny, TSchema>(
-      name,
-      config,
-      callback as ToolCallback<TSchema>,
-    );
-
-  registerTool(
+  server.registerTool(
     'get_board',
     {
       title: 'Get board',
@@ -349,7 +320,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'add_node',
     {
       title: 'Add node',
@@ -400,7 +371,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'patch_node',
     {
       title: 'Patch node',
@@ -413,7 +384,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         id: z.string().min(1).max(255).describe('Node ID to patch'),
         type: z.string().min(1).max(255).describe('Node type'),
         content: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .describe('Partial node content to merge into the node'),
         parent: z
           .string()
@@ -458,7 +429,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'remove_node',
     {
       title: 'Remove node',
@@ -504,7 +475,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'apply_board_actions',
     {
       title: 'Apply board actions',
@@ -542,7 +513,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'get_user_settings',
     {
       title: 'Get user settings',
@@ -571,7 +542,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'list_cocomaterial_tags',
     {
       title: 'List Cocomaterial tags',
@@ -595,7 +566,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'search_cocomaterial_vectors',
     {
       title: 'Search Cocomaterial vectors',
@@ -645,7 +616,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool(
+  server.registerTool(
     'add_cocomaterial_asset',
     {
       title: 'Add Cocomaterial asset',

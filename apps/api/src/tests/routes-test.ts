@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import {
   protectedProcedure,
   teamProcedure,
@@ -20,7 +20,7 @@ export const testRouter = router({
   team: teamProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query((req) => {
@@ -32,7 +32,7 @@ export const testRouter = router({
   teamAdmin: teamAdminProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query((req) => {
@@ -44,7 +44,7 @@ export const testRouter = router({
   teamMember: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query((req) => {
@@ -56,7 +56,7 @@ export const testRouter = router({
   board: boardProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
       }),
     )
     .query((req) => {
@@ -68,7 +68,7 @@ export const testRouter = router({
   boardAdmin: boardAdminProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
       }),
     )
     .query((req) => {
@@ -80,7 +80,7 @@ export const testRouter = router({
   boardMember: boardMemberProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
       }),
     )
     .query((req) => {

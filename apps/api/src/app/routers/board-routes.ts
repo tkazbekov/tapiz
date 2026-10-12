@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { BoardUser } from '@tapiz/board-commons';
 import {
   boardAdminProcedure,
@@ -20,7 +20,7 @@ export const boardRouter = router({
     .input(
       z.object({
         name: z.string().min(1).max(255),
-        teamId: z.string().uuid().optional(),
+        teamId: z.uuid().optional(),
       }),
     )
     .mutation(async (req) => {
@@ -130,7 +130,7 @@ export const boardRouter = router({
   changePrivacy: boardAdminProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
         isPublic: z.boolean(),
       }),
     )
@@ -156,7 +156,7 @@ export const boardRouter = router({
   rename: boardAdminProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
         name: z.string().max(255),
       }),
     )
@@ -225,7 +225,7 @@ export const boardRouter = router({
       });
     }),
   addStar: protectedProcedure
-    .input(z.object({ boardId: z.string().uuid() }))
+    .input(z.object({ boardId: z.uuid() }))
     .mutation(async (req) => {
       await db.board.addStarredBoard(req.ctx.user.sub, req.input.boardId);
 
@@ -234,7 +234,7 @@ export const boardRouter = router({
       };
     }),
   removeStar: protectedProcedure
-    .input(z.object({ boardId: z.string().uuid() }))
+    .input(z.object({ boardId: z.uuid() }))
     .mutation(async (req) => {
       await db.board.removeStarredBoard(req.ctx.user.sub, req.input.boardId);
 
@@ -245,8 +245,8 @@ export const boardRouter = router({
   transferBoard: boardAdminProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
-        teamId: z.string().uuid().optional(),
+        boardId: z.uuid(),
+        teamId: z.uuid().optional(),
       }),
     )
     .mutation(async (req) => {
@@ -272,7 +272,7 @@ export const boardRouter = router({
   boardMentions: boardMemberProcedure
     .input(
       z.object({
-        boardId: z.string().uuid(),
+        boardId: z.uuid(),
       }),
     )
     .query(async (req) => {
@@ -331,7 +331,7 @@ export const boardRouter = router({
   allTeamBoards: teamMemberProcedure
     .input(
       z.object({
-        teamId: z.string().uuid(),
+        teamId: z.uuid(),
       }),
     )
     .query(async (req) => {

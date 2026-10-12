@@ -1,21 +1,20 @@
 import { startDB } from '../app/db/init-db';
 import {
   createMultipleUsers,
+  createTestContext,
   errorCall,
   getAuth,
   getUserCaller,
 } from './test-helpers';
 import { randProductName, randUuid } from '@ngneat/falso';
 import { testRouter } from './routes-test';
-import { initTRPC } from '@trpc/server';
+import { createCallerFactory } from '../app/trpc';
 import db from '../app/db/index';
 
 describe('permissions', () => {
   let teamId: string;
   let boardId: string;
 
-  const t = initTRPC.context().create();
-  const { createCallerFactory } = t;
   const createCaller = createCallerFactory(testRouter);
 
   beforeAll(async () => {
@@ -69,9 +68,7 @@ describe('permissions', () => {
   });
 
   it('no user', async () => {
-    const caller = createCaller({
-      user: null,
-    });
+    const caller = createCaller(createTestContext(null));
 
     const result = await errorCall(async () => {
       return caller.protected();
@@ -83,9 +80,7 @@ describe('permissions', () => {
   it('login user', async () => {
     const user = getAuth(1);
 
-    const caller = createCaller({
-      user,
-    });
+    const caller = createCaller(createTestContext(user));
 
     const result = await caller.protected();
 
@@ -96,9 +91,7 @@ describe('permissions', () => {
     it('team not found', async () => {
       const user = getAuth(1);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.team({
@@ -112,9 +105,7 @@ describe('permissions', () => {
     it('team admin not authorized', async () => {
       const user = getAuth(2);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.teamAdmin({
@@ -128,9 +119,7 @@ describe('permissions', () => {
     it('team admin', async () => {
       const user = getAuth(1);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await caller.teamAdmin({
         teamId,
@@ -142,9 +131,7 @@ describe('permissions', () => {
     it('team member not authorized', async () => {
       const user = getAuth(9);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.teamMember({
@@ -158,9 +145,7 @@ describe('permissions', () => {
     it('team member', async () => {
       const user = getAuth(2);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await caller.teamMember({
         teamId,
@@ -174,9 +159,7 @@ describe('permissions', () => {
     it('board not found', async () => {
       const user = getAuth(1);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.board({
@@ -190,9 +173,7 @@ describe('permissions', () => {
     it('board admin not authorized', async () => {
       const user = getAuth(9);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.boardAdmin({
@@ -206,9 +187,7 @@ describe('permissions', () => {
     it('board admin', async () => {
       const user = getAuth(2);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await caller.boardAdmin({
         boardId,
@@ -220,9 +199,7 @@ describe('permissions', () => {
     it('board team admin', async () => {
       const user = getAuth(1);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await caller.boardAdmin({
         boardId,
@@ -234,9 +211,7 @@ describe('permissions', () => {
     it('board member not authorized', async () => {
       const user = getAuth(9);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await errorCall(async () => {
         return caller.boardMember({
@@ -250,9 +225,7 @@ describe('permissions', () => {
     it('board member', async () => {
       const user = getAuth(3);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       const result = await caller.boardMember({
         boardId,
@@ -264,9 +237,7 @@ describe('permissions', () => {
     it('board admin lost team access', async () => {
       const user = getAuth(2);
 
-      const caller = createCaller({
-        user,
-      });
+      const caller = createCaller(createTestContext(user));
 
       await db.team.deleteMember(teamId, user.sub);
 

@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { CommonBoardValidation } from './common-board-validation.js';
 import { NodeValidator } from '../models/node.model.js';
 import {
@@ -15,7 +15,7 @@ const pollBoard = z.object({
   finished: z.boolean(),
   options: z.array(
     z.object({
-      id: z.string().uuid(),
+      id: z.uuid(),
       text: z.string().max(2000),
     }),
   ),
@@ -110,7 +110,7 @@ const POLL_VALIDATOR: NodeValidator = {
 };
 
 const answer = z.object({
-  optionId: z.string().uuid(),
+  optionId: z.uuid(),
   userId: z.string().max(1000),
 });
 

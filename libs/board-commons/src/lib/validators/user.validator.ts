@@ -1,4 +1,4 @@
-import { z } from 'zod/v4';
+import { z } from 'zod';
 import { StateActions, TuNode } from '../models/node.model.js';
 
 const user = z.object({
