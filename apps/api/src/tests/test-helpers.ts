@@ -3,7 +3,8 @@ import { randEmail, randFirstName, randUuid } from '@ngneat/falso';
 import { appRouter } from '../app/routers/index.js';
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import fastifyIO from 'fastify-socket.io';
+import { Server as WsServer } from 'socket.io';
+import customParser from 'socket.io-msgpack-parser';
 import { initTRPC } from '@trpc/server';
 import { Server } from '../app/server.js';
 import db from '../app/db/index.js';
@@ -63,35 +64,46 @@ export const getUserCaller = (userIndex: number) => {
   });
 };
 
-export const initTestServer = (port: number): Promise<Server> => {
-  return new Promise((resolve) => {
-    const fastify = Fastify({
-      logger: true,
+export const initTestServer = async (port: number): Promise<Server> => {
+  const fastify = Fastify({
+    logger: true,
+    routerOptions: {
       maxParamLength: 5000,
-    });
-
-    fastify.register(fastifyCookie, {
-      hook: 'onRequest',
-      parseOptions: {},
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fastify.register(fastifyIO as any);
-
-    const server = new Server(fastify.io);
-
-    fastify.listen({ port }, (err) => {
-      if (err) throw err;
-
-      console.log(`http://localhost:${port}`);
-      resolve(server);
-    });
+    },
   });
+
+  await fastify.register(fastifyCookie, {
+    hook: 'onRequest',
+    parseOptions: {},
+  });
+
+  const io = new WsServer(fastify.server, {
+    parser: customParser,
+  });
+
+  fastify.decorate('io', io);
+
+  const server = new Server(io);
+
+  io.on('connection', (socket) => {
+    server.connection(
+      socket,
+      fastify.parseCookie(socket.request.headers.cookie ?? ''),
+    );
+  });
+
+  await fastify.listen({ port });
+
+  console.log(`http://localhost:${port}`);
+
+  return server;
 };
 
 export const initWs = (port: number): Promise<ReturnType<typeof io>> => {
   return new Promise((resolve) => {
-    const ws = io(`ws://localhost:${port}/events`, {
+    const ws = io(`ws://localhost:${port}`, {
+      transports: ['websocket'],
+      parser: customParser,
       extraHeaders: {
         Cookie: 'auth=1',
       },
@@ -101,6 +113,6 @@ export const initWs = (port: number): Promise<ReturnType<typeof io>> => {
       resolve(ws);
     });
 
-    ws.on('error', console.error);
+    ws.on('connect_error', console.error);
   });
 };

@@ -33,7 +33,7 @@ describe('ws', () => {
 
   function onClose() {
     return new Promise((resolve) => {
-      socket.on('close', () => {
+      socket.on('disconnect', () => {
         resolve(null);
       });
     });
@@ -55,11 +55,15 @@ describe('ws', () => {
     expect(wsServer.clients.length).toEqual(1);
     expect(wsServer.getBoard(board1.id)).toBeTruthy();
 
+    const closed = onClose();
+
     socket.close();
 
-    await onClose();
+    await closed;
 
-    expect(wsServer.clients.length).toEqual(0);
-    expect(wsServer.getBoard(board1.id)).toBeFalsy();
+    await vi.waitFor(() => {
+      expect(wsServer.clients.length).toEqual(0);
+      expect(wsServer.getBoard(board1.id)).toBeFalsy();
+    });
   });
 });

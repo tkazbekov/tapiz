@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import db from './db/index.js';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -7,7 +7,6 @@ import FastifyMultipart, {
   MultipartValue,
 } from '@fastify/multipart';
 import { createAuthContext } from './app.context.js';
-import { FastifyRequest } from 'fastify/types/request.js';
 import fastifyStatics from '@fastify/static';
 import { unlink, existsSync, mkdirSync } from 'fs';
 import sharp from 'sharp';

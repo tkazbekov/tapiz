@@ -204,7 +204,7 @@ export class RichTextEditorComponent
     }
 
     this.writingValue = true;
-    editor.commands.setContent(nextValue);
+    editor.commands.setContent(nextValue, { emitUpdate: false });
     this.writingValue = false;
     this.bumpEditorState();
   }

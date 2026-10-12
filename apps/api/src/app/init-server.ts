@@ -3,7 +3,7 @@ import { createAppContext } from './app.context.js';
 import { AppRouter, appRouter } from './routers/index.js';
 import fastifyCookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import fastifyIO from 'fastify-socket.io';
+import { Server as WsServer } from 'socket.io';
 import customParser from 'socket.io-msgpack-parser';
 
 import {
@@ -22,7 +22,37 @@ import db from './db/index.js';
 
 const fastify = Fastify({
   logger: false,
-  maxParamLength: 5000,
+  routerOptions: {
+    maxParamLength: 5000,
+  },
+});
+
+fastify.decorate(
+  'io',
+  new WsServer(fastify.server, {
+    connectionStateRecovery: {
+      // the backup duration of the sessions and the packets
+      maxDisconnectionDuration: 2 * 60 * 1000,
+      // whether to skip middlewares upon successful recovery
+      skipMiddlewares: true,
+    },
+    cors: {
+      credentials: true,
+      origin: process.env['FRONTEND_URL'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    },
+    parser: customParser,
+  }),
+);
+
+fastify.addHook('preClose', (done) => {
+  fastify.io.local.disconnectSockets(true);
+  done();
+});
+
+fastify.addHook('onClose', (instance, done) => {
+  void instance.io.close();
+  done();
 });
 
 await fastify.register(import('@fastify/rate-limit'), {
@@ -66,23 +96,7 @@ fastify.register(fastifyTRPCPlugin, {
 fastify.register(cors, {
   credentials: true,
   origin: true,
-});
-
-// https://github.com/ducktors/fastify-socket.io/issues/36
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-fastify.register(fastifyIO as any, {
-  connectionStateRecovery: {
-    // the backup duration of the sessions and the packets
-    maxDisconnectionDuration: 2 * 60 * 1000,
-    // whether to skip middlewares upon successful recovery
-    skipMiddlewares: true,
-  },
-  cors: {
-    credentials: true,
-    origin: process.env['FRONTEND_URL'],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  },
-  parser: customParser,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
 });
 
 fastify.register(async function (fastify) {

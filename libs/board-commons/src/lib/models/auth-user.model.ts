@@ -1,6 +1,6 @@
 export const noteFontFamilyValues = [
   '"Inter", -apple-system, system-ui, sans-serif',
-  'system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;',
+  'system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif',
   'ui-serif, serif',
   'Dank Mono, Operator Mono, Inconsolata, Fira Mono, ui-monospace, SF Mono, Monaco, Droid Sans Mono, Source Code Pro, Cascadia Code, Menlo, Consolas, DejaVu Sans Mono, monospace',
   'Caveat, cursive',

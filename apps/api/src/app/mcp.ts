@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  McpServer,
+  type ToolCallback,
+} from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type {
+  CallToolResult,
+  ToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { Socket } from 'socket.io';
 import { z } from 'zod';
 import {
@@ -33,18 +40,6 @@ type CocomaterialNodeInput = {
   layer: 0 | 1;
   rotation: number;
   kind?: 'vector' | 'image';
-};
-type ToolConfig = {
-  title: string;
-  description: string;
-  inputSchema: z.ZodTypeAny;
-  annotations: {
-    title: string;
-    readOnlyHint: boolean;
-    destructiveHint: boolean;
-    idempotentHint: boolean;
-    openWorldHint: boolean;
-  };
 };
 
 const boardIdSchema = z.string().uuid();
@@ -291,23 +286,28 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       instructions: TAPIZ_MCP_INSTRUCTIONS,
     },
   );
-  const registerTool = <TArgs extends Record<string, unknown>>(
+  // Explicit type arguments avoid TS2589 (excessively deep instantiation) when
+  // the SDK infers registerTool generics from a zod 3 schema; the callback is
+  // narrowed from z.infer to the SDK's conditional ToolCallback type.
+  const registerTool = <TSchema extends z.ZodTypeAny>(
     name: string,
-    config: ToolConfig,
+    config: {
+      title: string;
+      description: string;
+      inputSchema: TSchema;
+      annotations: ToolAnnotations;
+    },
     callback: (
-      args: TArgs,
-    ) => ReturnType<typeof textResult> | Promise<ReturnType<typeof textResult>>,
-  ) => {
-    const register = server.registerTool.bind(server) as unknown as (
-      toolName: string,
-      toolConfig: ToolConfig,
-      toolCallback: (args: TArgs) => unknown,
-    ) => void;
+      args: z.infer<TSchema>,
+    ) => CallToolResult | Promise<CallToolResult>,
+  ) =>
+    server.registerTool<z.ZodTypeAny, TSchema>(
+      name,
+      config,
+      callback as ToolCallback<TSchema>,
+    );
 
-    register(name, config, callback);
-  };
-
-  registerTool<{ boardId: string }>(
+  registerTool(
     'get_board',
     {
       title: 'Get board',
@@ -349,12 +349,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<{
-    boardId: string;
-    node: z.infer<typeof nodeSchema>;
-    parent?: string;
-    position?: number;
-  }>(
+  registerTool(
     'add_node',
     {
       title: 'Add node',
@@ -405,14 +400,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<{
-    boardId: string;
-    id: string;
-    type: string;
-    content: Record<string, unknown>;
-    parent?: string;
-    position?: number;
-  }>(
+  registerTool(
     'patch_node',
     {
       title: 'Patch node',
@@ -470,12 +458,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<{
-    boardId: string;
-    id: string;
-    type: string;
-    parent?: string;
-  }>(
+  registerTool(
     'remove_node',
     {
       title: 'Remove node',
@@ -521,10 +504,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<{
-    boardId: string;
-    actions: z.infer<typeof actionSchema>[];
-  }>(
+  registerTool(
     'apply_board_actions',
     {
       title: 'Apply board actions',
@@ -562,7 +542,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<Record<string, never>>(
+  registerTool(
     'get_user_settings',
     {
       title: 'Get user settings',
@@ -591,7 +571,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<Record<string, never>>(
+  registerTool(
     'list_cocomaterial_tags',
     {
       title: 'List Cocomaterial tags',
@@ -615,11 +595,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<{
-    page: number;
-    pageSize: number;
-    tags: string[];
-  }>(
+  registerTool(
     'search_cocomaterial_vectors',
     {
       title: 'Search Cocomaterial vectors',
@@ -669,7 +645,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
   );
 
-  registerTool<z.infer<typeof cocomaterialNodeSchema>>(
+  registerTool(
     'add_cocomaterial_asset',
     {
       title: 'Add Cocomaterial asset',
