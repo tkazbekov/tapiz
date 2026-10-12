@@ -23,6 +23,7 @@ import { AuthApiService } from '../../../../services/auth-api.service';
 import { safeReturnUrl } from '../../../../utils/safe-return-url';
 import { AuthLayoutComponent } from '../../components/auth-layout/auth-layout.component';
 import { authErrorMessage } from '../../auth-errors';
+import { WsService } from '../../../ws/services/ws.service';
 
 @Component({
   selector: 'tapiz-login',
@@ -33,6 +34,15 @@ import { authErrorMessage } from '../../auth-errors';
           Welcome to Tapiz! The free Open Source Tool designed for effortless
           and productive meetings, retrospectives, and brainstorming.
         </p>
+
+        @if (reason() === 'not-shared') {
+          <p
+            class="notice"
+            role="status">
+            This board isn't shared by link. Sign in with an account that has
+            access to open it.
+          </p>
+        }
 
         @if (guestName(); as name) {
           <p class="notice">
@@ -107,9 +117,12 @@ import { authErrorMessage } from '../../auth-errors';
 export class LoginComponent {
   #authApiService = inject(AuthApiService);
   #document = inject(DOCUMENT);
+  #wsService = inject(WsService);
   #user = inject(Store).selectSignal(appFeature.selectUser);
 
   returnUrl = input<string>();
+  // 'not-shared': boardGuard found no link sharing for the board
+  reason = input<string>();
   loading = signal(false);
   error = signal<string | null>(null);
 
@@ -141,6 +154,10 @@ export class LoginComponent {
     this.loading.set(true);
     this.error.set(null);
 
+    // login ends a guest session and disconnects its socket; close it first
+    // so the session check that follows can't clear the new cookie
+    this.#wsService.close();
+
     this.#authApiService.login({ email: email.trim(), password }).subscribe({
       next: () => {
         // a different user may have been loaded, start from a clean page
@@ -148,6 +165,12 @@ export class LoginComponent {
       },
       error: (error) => {
         this.loading.set(false);
+
+        // as app.component does, a socket only runs while signed in
+        if (this.#user()) {
+          this.#wsService.listen();
+        }
+
         this.error.set(
           authErrorMessage(error, {
             INVALID_CREDENTIALS: 'Incorrect email or password.',

@@ -29,6 +29,7 @@ import {
   startWith,
 } from 'rxjs/operators';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { BoardActions } from '../actions/board.actions';
 import { BoardPageActions } from '../actions/board-page.actions';
 import { BoardMoveService } from '../services/board-move.service';
@@ -61,6 +62,7 @@ import { FollowUserComponent } from '../../../shared/follow-user/follow-user.com
 import { StopHighlightComponent } from '../../../shared/stop-highlight/stop-highlight';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { appFeature } from '../../../+state/app.reducer';
+import { AppActions } from '../../../+state/app.actions';
 import { SubscriptionService } from '../../../services/subscription.service';
 import { DrawingStore } from '../components/drawing/drawing.store';
 import { DrawingOptionsComponent } from '../components/drawing-options';
@@ -159,6 +161,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   private nodesActions = inject(NodesActions);
   private configService = inject(ConfigService);
   private fileUploadService = inject(FileUploadService);
+  private snackBar = inject(MatSnackBar);
   private destroyRef = inject(DestroyRef);
   public readonly boardId$ = this.store.select(boardPageFeature.selectBoardId);
 
@@ -365,6 +368,35 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
         .subscribe(() => {
           this.store.dispatch(BoardPageActions.refetchBoard());
         });
+
+      // the header bell lists every mention, this one is on screen right now
+      this.subscriptionService
+        .subUser()
+        .pipe(takeUntilDestroyed())
+        .subscribe((event) => {
+          this.store.dispatch(AppActions.fetchNotifications({ offset: 0 }));
+
+          if (
+            event.event === 'mentionUser' &&
+            event.content.boardId === boardId
+          ) {
+            this.showMention(event.content.nodeId);
+          }
+        });
+    }
+  }
+
+  private showMention(nodeId?: string) {
+    const snackBarRef = this.snackBar.open(
+      'You were mentioned on this board',
+      nodeId ? 'Show' : 'Close',
+      { duration: 6000 },
+    );
+
+    if (nodeId) {
+      snackBarRef.onAction().subscribe(() => {
+        this.store.dispatch(BoardPageActions.goToNode({ nodeId }));
+      });
     }
   }
 

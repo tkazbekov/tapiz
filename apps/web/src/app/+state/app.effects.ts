@@ -10,12 +10,14 @@ import {
   from,
   map,
   of,
+  switchMap,
   tap,
 } from 'rxjs';
 import { Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { AuthApiService } from '../services/auth-api.service';
 import { HomeActions } from '../modules/home/+state/home.actions';
+import { signedOutRedirect } from '../modules/board/guards/board.guard';
 
 export const logout$ = createEffect(
   (
@@ -46,25 +48,44 @@ export const unauthorized$ = createEffect(
     actions$ = inject(Actions),
     router = inject(Router),
     authService = inject(AuthService),
+    authApiService = inject(AuthApiService),
   ) => {
     return actions$.pipe(
       ofType(AppActions.unauthorized),
       exhaustMap(() => {
         // the session may have ended or only this resource may be forbidden
-        return from(authService.refresh()).pipe(catchError(() => EMPTY));
-      }),
-      tap((user) => {
-        const onBoard = router.url.startsWith('/board');
+        return from(authService.refresh()).pipe(
+          switchMap((user) => {
+            if (!user) {
+              // link-shared boards offer the guest join page again
+              return signedOutRedirect(router, authApiService, router.url);
+            }
 
-        if (!user) {
-          void router.navigate(['/login'], {
-            queryParams: { returnUrl: router.url },
-          });
-        } else if (onBoard) {
-          void router.navigate(['/404']);
-        } else {
-          void router.navigate(['/']);
-        }
+            const segments = router.parseUrl(router.url).root.children[
+              'primary'
+            ]?.segments;
+            const boardId =
+              segments?.[0]?.path === 'board' ? segments[1]?.path : undefined;
+
+            // as the ws join refusal does: shows that the board is no
+            // longer shared by link
+            if (user.isGuest && boardId) {
+              return of(
+                router.createUrlTree(['/join', boardId], {
+                  queryParams: { returnUrl: router.url },
+                }),
+              );
+            }
+
+            const onBoard = router.url.startsWith('/board');
+
+            return of(router.createUrlTree([onBoard ? '/404' : '/']));
+          }),
+          catchError(() => EMPTY),
+        );
+      }),
+      tap((urlTree) => {
+        void router.navigateByUrl(urlTree);
       }),
     );
   },

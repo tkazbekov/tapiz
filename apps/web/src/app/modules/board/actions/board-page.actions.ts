@@ -67,7 +67,7 @@ export const BoardPageActions = createActionGroup({
     boardLoaded: emptyProps(),
     'Fetch mentions': emptyProps(),
     'Fetch mentions success': props<{
-      mentions: { id: string; name: string }[];
+      mentions: { id: string; name: string; isGuest?: boolean }[];
     }>(),
     'Mention user': props<{ userId: string; nodeId?: string }>(),
     'New user joined': emptyProps(),

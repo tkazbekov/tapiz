@@ -285,6 +285,13 @@ export const boardRouter = router({
       }),
     )
     .query(async (req) => {
+      // same reach as mentionBoardUser: guests don't see the team
+      if (req.ctx.user.isGuest) {
+        const users = await db.board.getBoardUsers(req.input.boardId);
+
+        return users.map(({ id, name, isGuest }) => ({ id, name, isGuest }));
+      }
+
       return db.board.getUsersToMention(req.input.boardId);
     }),
   mentionBoardUser: boardMemberProcedure
@@ -304,9 +311,11 @@ export const boardRouter = router({
         });
       }
 
-      const usersToMention = await db.board.getUsersToMention(
-        req.input.boardId,
-      );
+      // guests can mint identities freely, so they only reach the board's
+      // own members, not its whole team
+      const usersToMention = req.ctx.user.isGuest
+        ? await db.board.getBoardUsers(req.input.boardId)
+        : await db.board.getUsersToMention(req.input.boardId);
 
       if (!usersToMention.some((user) => user.id === req.input.userId)) {
         throw new TRPCError({
@@ -334,13 +343,15 @@ export const boardRouter = router({
       const mentionedUser = await db.user.getUser(req.input.userId);
       const board = await db.board.getBoardBasic(req.input.boardId);
 
-      // guests have no email
-      if (mentionedUser?.email && board) {
+      // guests are notified in the app only
+      if (mentionedUser?.email && !mentionedUser.isGuest && board) {
         void sendMentionNotificationEmail(
           mentionedUser.email,
           board.id,
           board.name,
-          req.ctx.user.name,
+          req.ctx.user.isGuest
+            ? `${req.ctx.user.name} (guest)`
+            : req.ctx.user.name,
           req.input.nodeId,
         );
       }

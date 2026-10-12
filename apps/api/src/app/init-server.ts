@@ -20,6 +20,7 @@ import { fileUpload } from './file-upload.js';
 import { registerTapizMcp } from './mcp.js';
 import { registerAgentSessionRoute } from './agent-auth.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
+import { mentionRateLimitKey } from './rate-limited.js';
 import db from './db/index.js';
 import {
   createWsAllowRequest,
@@ -105,6 +106,7 @@ const rateLimits = {
   mentionBoardUser: fastify.createRateLimit({
     max: 50,
     timeWindow: '1 minute',
+    keyGenerator: mentionRateLimitKey,
   }),
 };
 

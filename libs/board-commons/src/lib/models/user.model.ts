@@ -18,6 +18,7 @@ export interface BoardUserInfo {
   picture: string | null;
   role: 'admin' | 'member' | 'guest';
   id: string;
+  isGuest: boolean;
 }
 
 export type UserNode = TuNode<User>;

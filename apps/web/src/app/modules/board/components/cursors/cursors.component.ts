@@ -20,6 +20,10 @@ import { CommonModule } from '@angular/common';
         @if (user.cursor) {
           <div
             class="cursor"
+            role="img"
+            [attr.aria-label]="
+              user.isGuest ? user.name + ' (guest)' : user.name
+            "
             [style.transform]="'scale(' + scale() + ')'"
             [style.top.px]="user.cursor.y"
             [style.left.px]="user.cursor.x">
@@ -29,7 +33,7 @@ import { CommonModule } from '@angular/common';
               @if (user.picture) {
                 <img
                   [src]="user.picture"
-                  alt="{{ user.name }}" />
+                  [alt]="user.isGuest ? user.name + ' (guest)' : user.name" />
               } @else {
                 {{ user.name.charAt(0).toUpperCase() }}
               }

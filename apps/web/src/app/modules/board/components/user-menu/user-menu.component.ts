@@ -1,11 +1,14 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   inject,
   input,
   signal,
 } from '@angular/core';
 import { NgOptimizedImage } from '@angular/common';
+import { Router } from '@angular/router';
+import { MatDialog } from '@angular/material/dialog';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
@@ -17,10 +20,12 @@ import {
   WheelInputMode,
   withDefaultUserSettings,
 } from '@tapiz/board-commons';
-import { finalize } from 'rxjs';
+import { filter, finalize } from 'rxjs';
 import { AppActions } from '../../../../+state/app.actions';
 import { appFeature } from '../../../../+state/app.reducer';
+import { AuthService } from '../../../../services/auth.service';
 import { ConfigService } from '../../../../services/config.service';
+import { ConfirmComponent } from '../../../../shared/confirm-action/confirm-actions.component';
 import { UserApiService } from '../../../../services/user-api.service';
 import { BoardPageActions } from '../../actions/board-page.actions';
 import { BoardWheelInputService } from '../../services/board-wheel-input.service';
@@ -45,6 +50,9 @@ export class UserMenuComponent {
   #configService = inject(ConfigService);
   #wheelInput = inject(BoardWheelInputService);
   #snackBar = inject(MatSnackBar);
+  #router = inject(Router);
+  #dialog = inject(MatDialog);
+  #authService = inject(AuthService);
   #authUser = this.#store.selectSignal(appFeature.selectUser);
 
   user = input.required<User>();
@@ -52,6 +60,7 @@ export class UserMenuComponent {
   savingMode = signal<WheelInputMode | null>(null);
   readonly currentMode = this.#wheelInput.mode;
   readonly isDemo = this.#configService.config.DEMO;
+  readonly isGuest = computed(() => !!this.#authUser()?.isGuest);
 
   readonly wheelInputOptions: readonly WheelInputOption[] = [
     {
@@ -131,6 +140,43 @@ export class UserMenuComponent {
     this.#store.dispatch(
       BoardPageActions.toggleShowVotes({ userId: this.user().id }),
     );
+  }
+
+  createAccount() {
+    // register upgrades the guest in place and comes back to this board
+    void this.#router.navigate(['/register'], {
+      queryParams: { returnUrl: this.#router.url, from: 'guest' },
+    });
+  }
+
+  signIn() {
+    void this.#router.navigate(['/login'], {
+      queryParams: { returnUrl: this.#router.url },
+    });
+  }
+
+  leaveGuestSession() {
+    this.#dialog
+      .open(ConfirmComponent, {
+        data: {
+          title: 'Leave guest session?',
+          description: `You won't be able to come back as "${this.#authUser()?.name}". Your notes stay on the board under that name.`,
+          confirm: {
+            text: 'Leave',
+            color: 'warn',
+          },
+          cancel: {
+            text: 'Cancel',
+            color: 'basic',
+          },
+          align: 'end',
+        },
+      })
+      .afterClosed()
+      .pipe(filter(Boolean))
+      .subscribe(() => {
+        this.#authService.logout();
+      });
   }
 
   #setCurrentUser(user: AuthUserModel) {

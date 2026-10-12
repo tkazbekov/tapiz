@@ -60,6 +60,24 @@ const resetConfirmBody = z.object({
 
 const verifyEmailBody = z.object({ token: z.string() });
 
+const guestBody = z.object({
+  name: displayNameSchema,
+  boardId: z.uuid(),
+});
+
+// Only boards shared by link; private and missing boards look the same.
+async function getLinkBoard(boardId: unknown) {
+  const id = z.uuid().safeParse(boardId);
+
+  if (!id.success) {
+    return undefined;
+  }
+
+  const board = await db.board.getBoardBasic(id.data);
+
+  return board?.public ? board : undefined;
+}
+
 export function toAuthUser(account: Account): AuthUserModel {
   return {
     id: account.id,
@@ -298,6 +316,73 @@ export async function authRoutes(fastify: FastifyInstance) {
       } catch (e) {
         return sendKnownError(reply, e);
       }
+    },
+  );
+
+  fastify.get<{ Params: { boardId: string } }>(
+    '/api/auth/board-link/:boardId',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const board = await getLinkBoard(req.params.boardId);
+
+      if (!board) {
+        return sendError(reply, 404, 'NOT_FOUND');
+      }
+
+      return { name: board.name };
+    },
+  );
+
+  // Joins a board shared by link without an account.
+  fastify.post(
+    '/api/auth/guest',
+    { config: { rateLimit: { max: 30, timeWindow: '10 minutes' } } },
+    async (req, reply) => {
+      const body = guestBody.safeParse(req.body);
+
+      if (!body.success) {
+        return sendError(reply, 400, 'INVALID_REQUEST');
+      }
+
+      // checked before anything is created
+      if (!(await getLinkBoard(body.data.boardId))) {
+        return sendError(reply, 404, 'NOT_FOUND');
+      }
+
+      const principal = req.principal;
+
+      if (principal && !principal.isGuest) {
+        return sendError(reply, 409, 'ALREADY_SIGNED_IN');
+      }
+
+      // another tab already joined as a guest
+      if (principal) {
+        const account = await db.user.getUser(principal.sub);
+
+        if (
+          !account ||
+          !(await db.board.ensureBoardMember(body.data.boardId, account.id))
+        ) {
+          return sendError(reply, 404, 'NOT_FOUND');
+        }
+
+        return { user: toAuthUser(account) };
+      }
+
+      const guest = await db.user.createGuest({ name: body.data.name });
+
+      // link sharing was turned off meanwhile
+      if (!(await db.board.ensureBoardMember(body.data.boardId, guest.id))) {
+        await db.user.deleteAccount(guest.id);
+
+        return sendError(reply, 404, 'NOT_FOUND');
+      }
+
+      const session = await createSession(guest.id, true);
+
+      setSessionCookie(reply, session.token, session.expiresAt);
+
+      return reply.code(201).send({ user: toAuthUser(guest) });
     },
   );
 

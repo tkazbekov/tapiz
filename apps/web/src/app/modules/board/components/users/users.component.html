@@ -22,8 +22,8 @@
               <p class="username">
                 <span
                   class="name"
-                  [title]="user.name"
-                  >{{ user.name }}</span
+                  [title]="user.label"
+                  >{{ user.label }}</span
                 >
               </p>
               @if (user.picture) {
@@ -33,7 +33,7 @@
                   referrerpolicy="no-referrer"
                   width="48"
                   height="48"
-                  [alt]="user.name" />
+                  [alt]="user.label" />
               } @else {
                 <mat-icon
                   class="icon-svg no-picture"

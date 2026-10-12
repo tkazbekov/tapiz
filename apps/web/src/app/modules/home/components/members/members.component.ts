@@ -99,6 +99,7 @@ import { input } from '@angular/core';
                     name: member.name,
                     email: member.email,
                     role: member.role,
+                    isGuest: member.isGuest,
                   },
                 }
               ">
@@ -115,6 +116,9 @@ import { input } from '@angular/core';
             {{ member.name }}
             @if (isPending) {
               <span class="pending"> (Pending) </span>
+            }
+            @if (member.isGuest) {
+              <span class="guest-chip">Guest</span>
             }
           </div>
           @if (member.email) {
@@ -133,7 +137,12 @@ import { input } from '@angular/core';
             [value]="member.role"
             (valueChange)="onRoleChange($event, member.id, isPending)">
             <mat-option value="member">Member</mat-option>
-            <mat-option value="admin">Admin</mat-option>
+            <!-- guests need an account before they can administer -->
+            <mat-option
+              value="admin"
+              [disabled]="member.isGuest"
+              >Admin</mat-option
+            >
           </mat-select>
         </mat-form-field>
         @if (editable() && canDelete() && member.id !== currentUserId()) {

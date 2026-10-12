@@ -1,7 +1,7 @@
-import { Injectable, inject } from '@angular/core';
+import { DOCUMENT, Injectable, inject } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { wsOpen } from '../ws.actions';
-import { optimize } from '@tapiz/board-commons';
+import { AuthUserModel, optimize } from '@tapiz/board-commons';
 import { Router } from '@angular/router';
 import customParser from 'socket.io-msgpack-parser';
 import { NotificationService } from '../../../shared/notification/notification.service';
@@ -11,6 +11,11 @@ import { io } from 'socket.io-client';
 import { uuid } from '@tapiz/utils/uuid';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { GlobalStore } from '../../../+state/global.store';
+import { appFeature } from '../../../+state/app.reducer';
+import { AuthService } from '../../../services/auth.service';
+import { AuthApiService } from '../../../services/auth-api.service';
+import { signedOutRedirect } from '../../board/guards/board.guard';
+import { writeGuestNameHint } from '../../auth/guest-name-hint';
 
 @Injectable({
   providedIn: 'root',
@@ -21,6 +26,11 @@ export class WsService {
   #pool: unknown[] = [];
   #notificationService = inject(NotificationService);
   #router = inject(Router);
+  #document = inject(DOCUMENT);
+  #authService = inject(AuthService);
+  #authApiService = inject(AuthApiService);
+  #user = this.#store.selectSignal(appFeature.selectUser);
+  #authCheck: Promise<void> | null = null;
   #socket = io(this.#configService.config.WS_URL, {
     autoConnect: false,
     withCredentials: true,
@@ -53,15 +63,9 @@ export class WsService {
         return;
       }
 
+      // the server closed the socket, usually because the session ended
       if (reason === 'io server disconnect') {
-        this.#notificationService.open({
-          message: 'Connection lost',
-          action: 'Close',
-          type: 'error',
-          durantion: 3000,
-        });
-
-        this.#router.navigate(['/']);
+        this.#checkSession();
         return;
       }
 
@@ -87,6 +91,11 @@ export class WsService {
       },
     );
 
+    // sent right before the server disconnects a socket whose session ended
+    this.#socket.on('auth_error', () => {
+      this.#checkSession();
+    });
+
     this.#socket.on('error', (type: string) => {
       if (type === 'unauthorized') {
         this.#notificationService.open({
@@ -95,7 +104,18 @@ export class WsService {
           type: 'error',
         });
 
-        this.#router.navigate(['/']);
+        const boardId = this.#boardId();
+
+        if (!boardId) {
+          void this.#router.navigate(['/']);
+        } else if (this.#user()?.isGuest) {
+          // shows that the board is no longer shared by link
+          void this.#router.navigate(['/join', boardId], {
+            queryParams: { returnUrl: this.#router.url },
+          });
+        } else {
+          void this.#router.navigate(['/404']);
+        }
       }
     });
 
@@ -127,6 +147,62 @@ export class WsService {
 
   leaveBoard() {
     this.#socket.emit('leaveBoard');
+  }
+
+  // auth_error and the disconnect that follows it report the same loss
+  #checkSession() {
+    if (this.#authCheck) {
+      return;
+    }
+
+    this.#authCheck = this.#recoverSession().finally(() => {
+      this.#authCheck = null;
+    });
+  }
+
+  async #recoverSession() {
+    const previousUser = this.#user();
+    let user: AuthUserModel | null;
+
+    try {
+      user = await this.#authService.refresh();
+    } catch {
+      // the api is unreachable, the session may still be fine; socket.io
+      // retries with backoff and the server re-checks the session on connect
+      this.#globalStore.setWsConnectionLost(true);
+      this.#socket.connect();
+      return;
+    }
+
+    if (!user) {
+      if (previousUser?.isGuest) {
+        writeGuestNameHint(previousUser.name);
+      }
+
+      // refresh() already cleared the user, the guards can't run again on
+      // the same url so the redirect is resolved here
+      signedOutRedirect(
+        this.#router,
+        this.#authApiService,
+        this.#router.url,
+      ).subscribe((urlTree) => {
+        void this.#router.navigateByUrl(urlTree);
+      });
+    } else if (user.id !== previousUser?.id) {
+      // signed in as someone else in another tab
+      this.#document.location.reload();
+    } else {
+      // only this socket was dropped, reconnect$ joins the board again
+      this.#socket.connect();
+    }
+  }
+
+  #boardId() {
+    const segments = this.#router.parseUrl(this.#router.url).root.children[
+      'primary'
+    ]?.segments;
+
+    return segments?.[0]?.path === 'board' ? segments[1]?.path : undefined;
   }
 
   #poolLoop() {

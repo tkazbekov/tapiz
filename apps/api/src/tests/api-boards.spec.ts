@@ -1,14 +1,31 @@
+import type { FastifyRequest } from 'fastify';
+import { vi } from 'vitest';
 import { startDB } from '../app/db/init-db';
 import db from '../app/db';
 import {
+  createGuest,
   createMultipleUsers,
   deleteTestBoards,
   errorCall,
   getAuth,
+  getGuestAuth,
+  getGuestCaller,
   getUserCaller,
 } from './test-helpers';
 import { randProductName } from '@ngneat/falso';
 import { addTeamMember } from '../app/db/user-db';
+import { mentionRateLimitKey } from '../app/rate-limited';
+
+const mentionEmail = vi.hoisted(() => vi.fn());
+
+vi.mock('../app/mailer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../app/mailer')>();
+
+  return {
+    ...actual,
+    sendMentionNotificationEmail: mentionEmail,
+  };
+});
 
 describe('board', () => {
   let teamId: string;
@@ -732,6 +749,145 @@ describe('board', () => {
       const notifications = await db.user.getUserNotifications(getAuth(92).sub);
 
       expect(notifications.length).toEqual(0);
+    });
+
+    describe('guests', () => {
+      let publicBoardId: string;
+
+      beforeAll(async () => {
+        for (let i = 0; i < 3; i++) {
+          await createGuest(i);
+        }
+
+        const owner = await getUserCaller(95);
+
+        publicBoardId = (await owner.board.create({ name: 'guest mentions' }))
+          .id;
+        await owner.board.changePrivacy({
+          boardId: publicBoardId,
+          isPublic: true,
+        });
+        await db.board.ensureBoardMember(publicBoardId, getGuestAuth(0).sub);
+      });
+
+      beforeEach(() => {
+        mentionEmail.mockClear();
+      });
+
+      it('lists guests as guests', async () => {
+        const caller = await getGuestCaller(0);
+
+        const users = await caller.board.boardUsers({ boardId: publicBoardId });
+        const mentions = await caller.board.boardMentions({
+          boardId: publicBoardId,
+        });
+
+        for (const list of [users, mentions]) {
+          expect(list).toContainEqual(
+            expect.objectContaining({ id: getAuth(95).sub, isGuest: false }),
+          );
+          expect(list).toContainEqual(
+            expect.objectContaining({
+              id: getGuestAuth(0).sub,
+              isGuest: true,
+            }),
+          );
+        }
+      });
+
+      it('notifies mentioned guests in the app only', async () => {
+        const caller = await getUserCaller(95);
+
+        await caller.board.mentionBoardUser({
+          boardId: publicBoardId,
+          userId: getGuestAuth(0).sub,
+        });
+
+        expect(
+          await db.user.getUserNotifications(getGuestAuth(0).sub),
+        ).toHaveLength(1);
+        expect(mentionEmail).not.toHaveBeenCalled();
+      });
+
+      it('names guest mentioners as guests', async () => {
+        const caller = await getGuestCaller(0);
+
+        await caller.board.mentionBoardUser({
+          boardId: publicBoardId,
+          userId: getAuth(95).sub,
+        });
+
+        expect(mentionEmail).toHaveBeenCalledWith(
+          getAuth(95).email,
+          publicBoardId,
+          'guest mentions',
+          `${getGuestAuth(0).name} (guest)`,
+          undefined,
+        );
+      });
+
+      it('lets guests mention board members only, not the whole team', async () => {
+        const owner = await getUserCaller(96);
+        const team = await db.team.createTeam(
+          'guest mention team',
+          getAuth(96).sub,
+        );
+
+        await addTeamMember(getAuth(97).sub, team.id, 'member');
+
+        const board = await owner.board.create({
+          name: 'team board',
+          teamId: team.id,
+        });
+
+        await owner.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+        const guest = await getGuestCaller(1);
+
+        const guestMentions = await guest.board.boardMentions({
+          boardId: board.id,
+        });
+
+        expect(guestMentions.map((it) => it.id)).not.toContain(getAuth(97).sub);
+        expect(guestMentions.map((it) => it.id)).toContain(getAuth(96).sub);
+        expect(
+          (await owner.board.boardMentions({ boardId: board.id })).map(
+            (it) => it.id,
+          ),
+        ).toContain(getAuth(97).sub);
+
+        const result = await errorCall(() =>
+          guest.board.mentionBoardUser({
+            boardId: board.id,
+            userId: getAuth(97).sub,
+          }),
+        );
+
+        expect(result?.code).toEqual('BAD_REQUEST');
+        expect(
+          await db.user.getUserNotifications(getAuth(97).sub),
+        ).toHaveLength(0);
+
+        const allowed = await guest.board.mentionBoardUser({
+          boardId: board.id,
+          userId: getAuth(96).sub,
+        });
+
+        expect(allowed.success).toEqual(true);
+      });
+
+      it('rate limits guests by IP', () => {
+        const request = (principal: unknown) =>
+          ({ ip: '10.1.2.3', principal }) as unknown as FastifyRequest;
+
+        expect(mentionRateLimitKey(request(getAuth(95)))).toEqual(
+          `p:${getAuth(95).sub}`,
+        );
+        expect(mentionRateLimitKey(request(getGuestAuth(0)))).toEqual(
+          'ip:10.1.2.3',
+        );
+        expect(mentionRateLimitKey(request(null))).toEqual('ip:10.1.2.3');
+      });
     });
 
     it('rejects node ids that are not uuids', async () => {

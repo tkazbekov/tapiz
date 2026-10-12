@@ -219,6 +219,7 @@ export async function getBoardUsers(boardId: string): Promise<BoardUserInfo[]> {
       accounts: {
         name: schema.accounts.name,
         picture: schema.accounts.picture,
+        isGuest: schema.accounts.isGuest,
       },
     })
     .from(schema.acountsToBoards)
@@ -235,6 +236,7 @@ export async function getBoardUsers(boardId: string): Promise<BoardUserInfo[]> {
       name: result.accounts.name,
       role: result.role,
       picture: result.accounts.picture,
+      isGuest: result.accounts.isGuest,
     }));
 }
 
@@ -505,13 +507,16 @@ export async function getUsersToMention(
   const users = usersDB.map((user) => ({
     id: user.id,
     name: user.name,
+    isGuest: user.isGuest,
   }));
 
+  // guests can't join teams
   if (board.teamId) {
     const teamMembers = await team.getTeamMembers(board.teamId);
     const teamUsers = teamMembers.map((member) => ({
       id: member.id,
       name: member.name,
+      isGuest: false,
     }));
 
     users.push(...teamUsers);
@@ -525,7 +530,7 @@ export async function getUsersToMention(
 
       return acc;
     },
-    [] as { id: string; name: string }[],
+    [] as { id: string; name: string; isGuest: boolean }[],
   );
 
   return uniqueUsers.filter((user) => !exclude.includes(user.id));

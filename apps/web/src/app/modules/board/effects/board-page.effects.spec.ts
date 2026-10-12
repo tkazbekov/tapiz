@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideMockActions } from '@ngrx/effects/testing';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { Action } from '@ngrx/store';
-import { Subject, firstValueFrom, of } from 'rxjs';
+import { Subject, firstValueFrom, of, throwError } from 'rxjs';
 import { catchError, take, timeout } from 'rxjs/operators';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { ActivatedRoute } from '@angular/router';
@@ -18,11 +18,13 @@ describe('BoardPageEffects', () => {
   let effects: BoardPageEffects;
   let store: MockStore;
   let getBoardMentions: ReturnType<typeof vi.fn>;
+  let mentionBoardUser: ReturnType<typeof vi.fn>;
   const config = { DEMO: false };
 
   beforeEach(() => {
     config.DEMO = false;
     getBoardMentions = vi.fn(() => of([]));
+    mentionBoardUser = vi.fn(() => of({ success: true }));
     actions$ = new Subject<Action>();
 
     TestBed.configureTestingModule({
@@ -47,7 +49,7 @@ describe('BoardPageEffects', () => {
         },
         {
           provide: BoardApiService,
-          useValue: { getBoardMentions },
+          useValue: { getBoardMentions, mentionBoardUser },
         },
         {
           provide: ConfigService,
@@ -88,6 +90,33 @@ describe('BoardPageEffects', () => {
     await expect(result).resolves.toEqual(
       BoardPageActions.setPopupOpen({ popup: '' }),
     );
+  });
+
+  it('keeps sending mentions after one is refused', async () => {
+    store.overrideSelector(boardPageFeature.selectBoardId, 'board-1');
+    store.overrideSelector(boardPageFeature.selectUserId, 'user-1');
+    store.refreshState();
+    mentionBoardUser.mockReturnValueOnce(
+      throwError(() => new Error('User is not a member of this board.')),
+    );
+
+    const errors: unknown[] = [];
+    const subscription = effects.mentionUser$.subscribe({
+      error: (error) => errors.push(error),
+    });
+
+    actions$.next(BoardPageActions.mentionUser({ userId: 'user-2' }));
+    actions$.next(BoardPageActions.mentionUser({ userId: 'user-3' }));
+
+    expect(errors).toEqual([]);
+    expect(mentionBoardUser).toHaveBeenCalledTimes(2);
+    expect(mentionBoardUser).toHaveBeenLastCalledWith(
+      'board-1',
+      'user-3',
+      undefined,
+    );
+
+    subscription.unsubscribe();
   });
 
   it('does not fetch authenticated mentions in Demo', async () => {

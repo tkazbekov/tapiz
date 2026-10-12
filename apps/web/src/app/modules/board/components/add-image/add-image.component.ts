@@ -13,8 +13,10 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { Store } from '@ngrx/store';
 import { AutoFocusDirective } from '../../directives/autofocus.directive';
 import { ConfigService } from '../../../../services/config.service';
+import { appFeature } from '../../../../+state/app.reducer';
 
 @Component({
   selector: 'tapiz-add-image',
@@ -26,7 +28,8 @@ import { ConfigService } from '../../../../services/config.service';
     AutoFocusDirective,
   ],
   template: `
-    @if (!isDemo) {
+    <!-- guests can't upload, images by url still work -->
+    @if (!isDemo && !isGuest()) {
       <div class="upload-image">
         <button
           color="primary"
@@ -73,6 +76,8 @@ import { ConfigService } from '../../../../services/config.service';
 })
 export class AddImageComponent {
   #configService = inject(ConfigService);
+
+  isGuest = inject(Store).selectSignal(appFeature.selectIsGuest);
 
   get isDemo() {
     return !!this.#configService.config.DEMO;

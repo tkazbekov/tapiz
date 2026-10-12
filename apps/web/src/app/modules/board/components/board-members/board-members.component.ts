@@ -56,6 +56,7 @@ export class BoardMembersComponent {
           id: user.id,
           name: user.name,
           role: user.role,
+          isGuest: user.isGuest,
         }) satisfies Member,
     );
   });

@@ -19,6 +19,9 @@ import { AuthApiService } from '../../../../services/auth-api.service';
 import { AuthLayoutComponent } from '../../components/auth-layout/auth-layout.component';
 import { authErrorCode, authErrorMessage } from '../../auth-errors';
 import { takeHashToken } from '../../hash-token';
+import { WsService } from '../../../ws/services/ws.service';
+import { Store } from '@ngrx/store';
+import { appFeature } from '../../../../+state/app.reducer';
 
 @Component({
   selector: 'tapiz-reset-password',
@@ -85,6 +88,8 @@ import { takeHashToken } from '../../hash-token';
 export class ResetPasswordComponent {
   #authApiService = inject(AuthApiService);
   #document = inject(DOCUMENT);
+  #wsService = inject(WsService);
+  #userId = inject(Store).selectSignal(appFeature.selectUserId);
 
   readonly token = takeHashToken(this.#document);
   loading = signal(false);
@@ -110,6 +115,10 @@ export class ResetPasswordComponent {
     this.loading.set(true);
     this.error.set(null);
 
+    // the reset ends the current session and disconnects its socket; close
+    // it first so the session check that follows can't clear the new cookie
+    this.#wsService.close();
+
     this.#authApiService
       .confirmReset({
         token: this.token,
@@ -122,6 +131,11 @@ export class ResetPasswordComponent {
         },
         error: (error) => {
           this.loading.set(false);
+
+          // as app.component does, a socket only runs while signed in
+          if (this.#userId()) {
+            this.#wsService.listen();
+          }
 
           if (authErrorCode(error) === 'INVALID_OR_EXPIRED_TOKEN') {
             this.invalidToken.set(true);

@@ -3,6 +3,8 @@ import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { concatLatestFrom } from '@ngrx/operators';
 import { Store } from '@ngrx/store';
 import {
+  EMPTY,
+  catchError,
   debounceTime,
   filter,
   map,
@@ -229,11 +231,9 @@ export class BoardPageEffects {
         ]),
         filter(([{ userId }, , currentUserId]) => userId !== currentUserId),
         switchMap(([{ userId, nodeId }, boardId]) => {
-          return this.#boardApiService.mentionBoardUser(
-            boardId,
-            userId,
-            nodeId,
-          );
+          return this.#boardApiService
+            .mentionBoardUser(boardId, userId, nodeId)
+            .pipe(catchError(() => EMPTY));
         }),
       );
     },

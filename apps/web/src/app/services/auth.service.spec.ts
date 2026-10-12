@@ -1,4 +1,4 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import {
@@ -39,7 +39,11 @@ describe('AuthService', () => {
         provideZonelessChangeDetection(),
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
-        { provide: Store, useValue: { dispatch } },
+        // the interceptor creates WsService, which reads the user
+        {
+          provide: Store,
+          useValue: { dispatch, selectSignal: () => signal(null) },
+        },
         { provide: ConfigService, useValue: { config } },
       ],
     });

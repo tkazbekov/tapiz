@@ -219,12 +219,21 @@ describe('auth routes', () => {
       await db.board.ensureBoardMember(board.id, guest.id);
       await db.user.mentionUser(board.id, guest.id);
 
-      const { response, cookie, user } = await register(newEmail(), {
+      const { response, cookie, user, email } = await register(newEmail(), {
         cookie: guestSession.token,
       });
 
       expect(response.statusCode).toEqual(201);
-      expect(user).toMatchObject({ id: guest.id, isGuest: false });
+      expect(user).toMatchObject({
+        id: guest.id,
+        isGuest: false,
+        email,
+        emailVerified: false,
+      });
+      expect(mail.verify).toHaveBeenCalledWith(
+        email,
+        expect.stringContaining('/verify-email#token='),
+      );
       expect(cookie).not.toEqual(guestSession.token);
       expect(await currentUser(guestSession.token)).toBeNull();
       expect((await currentUser(cookie))?.id).toEqual(guest.id);
@@ -244,6 +253,141 @@ describe('auth routes', () => {
       expect(results.map((it) => it.response.statusCode).sort()).toEqual([
         201, 409,
       ]);
+    });
+  });
+
+  describe('guests', () => {
+    let publicBoardId: string;
+    let privateBoardId: string;
+
+    const guestName = () => `Guest ${randomUUID().slice(0, 8)}`;
+
+    const joinAsGuest = (
+      boardId: string,
+      { name = guestName(), cookie }: { name?: string; cookie?: string } = {},
+    ) => post('/api/auth/guest', { name, boardId }, { cookie, ip: nextIp() });
+
+    const boardLink = (boardId: string) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/auth/board-link/${boardId}`,
+        remoteAddress: nextIp(),
+      });
+
+    beforeAll(async () => {
+      const owner = getUserCaller(0);
+
+      publicBoardId = (await owner.board.create({ name: 'link board' })).id;
+      privateBoardId = (await owner.board.create({ name: 'secret board' })).id;
+
+      await owner.board.changePrivacy({
+        boardId: publicBoardId,
+        isPublic: true,
+      });
+    });
+
+    it('tells only whether a board is shared by link', async () => {
+      const shared = await boardLink(publicBoardId);
+
+      expect(shared.statusCode).toEqual(200);
+      expect(shared.json()).toEqual({ name: 'link board' });
+
+      for (const id of [privateBoardId, randomUUID(), 'not-a-uuid']) {
+        const response = await boardLink(id);
+
+        expect(response.statusCode).toEqual(404);
+        expect(response.json()).toEqual({ error: 'NOT_FOUND' });
+      }
+    });
+
+    it('creates nothing for boards that are not shared', async () => {
+      for (const boardId of [privateBoardId, randomUUID()]) {
+        const name = guestName();
+        const response = await joinAsGuest(boardId, { name });
+
+        expect(response.statusCode).toEqual(404);
+        expect(sessionCookie(response)).toBeUndefined();
+        expect(await db.user.getUserByName(name)).toBeUndefined();
+      }
+    });
+
+    it('joins a shared board with a guest session', async () => {
+      const name = guestName();
+      const response = await joinAsGuest(publicBoardId, { name });
+      const cookie = sessionCookie(response);
+      const { user } = response.json();
+
+      expect(response.statusCode).toEqual(201);
+      expect(Object.keys(user).sort()).toEqual(userKeys);
+      expect(user).toMatchObject({
+        name,
+        email: null,
+        isGuest: true,
+        emailVerified: false,
+      });
+      expect(cookie).toMatchObject({ httpOnly: true, sameSite: 'Lax' });
+      // guests can't sign back in, so their session outlives an account's
+      expect(cookie?.maxAge).toBeGreaterThan(90 * 24 * 60 * 60);
+      expect(await currentUser(cookie?.value ?? '')).toMatchObject({
+        id: user.id,
+        isGuest: true,
+      });
+      expect(await db.board.getBoardUser(publicBoardId, user.id)).toBeTruthy();
+    });
+
+    it('reuses the guest session of another tab', async () => {
+      const first = await joinAsGuest(publicBoardId);
+      const cookie = sessionCookie(first)?.value ?? '';
+      const otherBoard = await getUserCaller(1).board.create({
+        name: 'second link board',
+      });
+
+      await getUserCaller(1).board.changePrivacy({
+        boardId: otherBoard.id,
+        isPublic: true,
+      });
+
+      const name = guestName();
+      const again = await joinAsGuest(otherBoard.id, { name, cookie });
+
+      expect(again.statusCode).toEqual(200);
+      expect(again.json().user.id).toEqual(first.json().user.id);
+      expect(sessionCookie(again)).toBeUndefined();
+      expect(await db.user.getUserByName(name)).toBeUndefined();
+      expect(
+        await db.board.getBoardUser(otherBoard.id, first.json().user.id),
+      ).toBeTruthy();
+    });
+
+    it('rejects accounts and invalid names', async () => {
+      const { cookie } = await register();
+
+      const signedIn = await joinAsGuest(publicBoardId, { cookie });
+
+      expect(signedIn.statusCode).toEqual(409);
+      expect(signedIn.json()).toEqual({ error: 'ALREADY_SIGNED_IN' });
+
+      for (const name of ['', '   ', 'Ana\u202e', 'x'.repeat(65)]) {
+        expect((await joinAsGuest(publicBoardId, { name })).statusCode).toEqual(
+          400,
+        );
+      }
+    });
+
+    it('signs up from a link without losing the board', async () => {
+      const joined = await joinAsGuest(publicBoardId);
+      const guestCookie = sessionCookie(joined)?.value ?? '';
+      const guestId = joined.json().user.id;
+
+      const { response, cookie, user } = await register(newEmail(), {
+        cookie: guestCookie,
+      });
+
+      expect(response.statusCode).toEqual(201);
+      expect(user.id).toEqual(guestId);
+      expect(await currentUser(guestCookie)).toBeNull();
+      expect((await currentUser(cookie))?.isGuest).toEqual(false);
+      expect(await db.board.getBoardUser(publicBoardId, guestId)).toBeTruthy();
     });
   });
 

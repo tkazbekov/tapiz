@@ -6,6 +6,9 @@
   <span class="username">
     <span class="name">{{ user().name }}</span>
     <span class="myself">(me)</span>
+    @if (isGuest()) {
+      <span class="guest-chip">Guest</span>
+    }
   </span>
   @if (picture()) {
     <img
@@ -44,9 +47,37 @@
     }
     <span>
       <strong>{{ user().name }}</strong>
-      <small>User settings</small>
+      @if (isGuest()) {
+        <small class="guest-chip">Guest</small>
+      } @else {
+        <small>User settings</small>
+      }
     </span>
   </div>
+
+  @if (isGuest() && !isDemo) {
+    <button
+      mat-menu-item
+      type="button"
+      (click)="createAccount()">
+      <mat-icon>person_add</mat-icon>
+      <span>Create account</span>
+    </button>
+    <button
+      mat-menu-item
+      type="button"
+      (click)="signIn()">
+      <mat-icon>login</mat-icon>
+      <span>Sign in</span>
+    </button>
+    <button
+      mat-menu-item
+      type="button"
+      (click)="leaveGuestSession()">
+      <mat-icon>logout</mat-icon>
+      <span>Leave guest session</span>
+    </button>
+  }
 
   <mat-divider />
 

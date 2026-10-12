@@ -133,3 +133,13 @@
     white-space: normal;
   }
 }
+
+.guest-chip {
+  align-self: flex-start;
+  background: var(--grey-20);
+  border-radius: var(--radius-4);
+  color: var(--grey-70);
+  font-size: var(--font-size-12);
+  font-weight: 600;
+  padding: 0 var(--spacing-2);
+}

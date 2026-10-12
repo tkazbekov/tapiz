@@ -457,7 +457,11 @@ const reducer = createReducer(
     (state, { mentions }): BoardPageState => {
       return {
         ...state,
-        mentions,
+        // the picker only shows names, guests choose theirs freely
+        mentions: mentions.map(({ id, name, isGuest }) => ({
+          id,
+          name: isGuest ? `${name} (guest)` : name,
+        })),
       };
     },
   ),

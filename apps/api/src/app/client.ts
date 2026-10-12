@@ -347,6 +347,21 @@ export class Client {
     };
 
     try {
+      // access may have been revoked while it was checked, before
+      // checkBoardAccess could see this client on the board; later changes
+      // reach it through refreshAccess
+      const stillHasAccess = await db.board.haveAccess(boardId, this.id);
+
+      if (isStale()) {
+        return;
+      }
+
+      if (!stillHasAccess) {
+        this.close();
+        this.unauthorizedClose();
+        return;
+      }
+
       await this.server.createBoard(boardId);
 
       if (isStale()) {
@@ -394,19 +409,6 @@ export class Client {
       };
 
       this.sendAll(boardId, this.getStateAction([userAction]));
-
-      // access may have been revoked while joining
-      const stillHasAccess = await db.board.haveAccess(boardId, this.id);
-
-      if (isStale()) {
-        return;
-      }
-
-      if (!stillHasAccess) {
-        this.close();
-        this.unauthorizedClose();
-        return;
-      }
 
       // re-subscribe to board events too: after a reconnect the client only
       // sends `join`

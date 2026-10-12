@@ -68,7 +68,9 @@ describe('ws', () => {
   beforeAll(async () => {
     await startDB();
     await createMultipleUsers();
-    await createGuest(0);
+    for (let i = 0; i < 4; i++) {
+      await createGuest(i);
+    }
     wsServer = await initTestServer(port);
     socket = await initWs(port);
   });
@@ -550,6 +552,128 @@ describe('ws', () => {
         .getStateBoardUsers(board.id)
         .find((node) => node.id === getGuestAuth(0).sub)?.content,
     ).toMatchObject({ name: getGuestAuth(0).name, isGuest: true });
+
+    guest.close();
+  });
+
+  it('refuses guests on boards that are not shared', async () => {
+    const caller = await getUserCaller(18);
+    const board = await caller.board.create({ name: 'not shared' });
+
+    const guest = await connect('tapiz_session=g1');
+    const errors = errorsOf(guest);
+
+    await sendFrom(guest, { action: 'join', boardId: board.id });
+
+    await vi.waitFor(() => {
+      expect(errors).toEqual(['unauthorized']);
+    });
+
+    expect(wsServer.getBoard(board.id)).toBeUndefined();
+    expect(await getBoardUser(board.id, getGuestAuth(1).sub)).toBeFalsy();
+
+    guest.close();
+  });
+
+  it('drops guests when link sharing is turned off', async () => {
+    const caller = await getUserCaller(18);
+    const board = await caller.board.create({ name: 'shared for a while' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const guest = await connect('tapiz_session=g2');
+    const errors = errorsOf(guest);
+
+    await sendFrom(guest, { action: 'join', boardId: board.id });
+
+    const client = wsServer.clients.find((it) => it.socket.id === guest.id);
+
+    await vi.waitFor(() => {
+      expect(client?.boardId).toEqual(board.id);
+    });
+
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: false });
+
+    await vi.waitFor(() => {
+      expect(errors).toEqual(['unauthorized']);
+      expect(client?.boardId).toBeUndefined();
+    });
+
+    guest.close();
+  });
+
+  it('refuses guests whose access ends before the board loads', async () => {
+    const caller = await getUserCaller(18);
+    const board = await caller.board.create({ name: 'unshared mid join' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const guest = await connect('tapiz_session=g0');
+    const errors = errorsOf(guest);
+    const createBoard = vi.spyOn(wsServer, 'createBoard');
+    const boardDb = db.board;
+
+    // sharing ends after the first access check, before this client is on
+    // the board where checkBoardAccess could reach it
+    db.board = {
+      ...boardDb,
+      haveAccess: async (boardId, userId) => {
+        db.board = boardDb;
+        await boardDb.setBoardPrivacy(boardId, false);
+
+        return boardDb.haveAccess(boardId, userId);
+      },
+    };
+
+    try {
+      await sendFrom(guest, { action: 'join', boardId: board.id });
+
+      await vi.waitFor(() => {
+        expect(errors).toEqual(['unauthorized']);
+      });
+
+      expect(createBoard).not.toHaveBeenCalledWith(board.id);
+      expect(wsServer.getBoard(board.id)).toBeUndefined();
+      expect(
+        wsServer.clients.some((client) => client.boardId === board.id),
+      ).toEqual(false);
+    } finally {
+      db.board = boardDb;
+      createBoard.mockRestore();
+      guest.close();
+    }
+  });
+
+  it('keeps an upgraded guest on the board under its new identity', async () => {
+    const caller = await getUserCaller(19);
+    const board = await caller.board.create({ name: 'upgrade' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const guest = await connect('tapiz_session=g3');
+    const guestId = getGuestAuth(3).sub;
+
+    await sendFrom(guest, { action: 'join', boardId: board.id });
+
+    const client = wsServer.clients.find((it) => it.socket.id === guest.id);
+
+    await vi.waitFor(() => {
+      expect(client?.boardId).toEqual(board.id);
+    });
+
+    wsServer.updateIdentity(guestId, {
+      name: 'Signed Up',
+      isGuest: false,
+      sessionId: 'upgraded-session',
+    });
+
+    expect(client).toMatchObject({
+      username: 'Signed Up',
+      isGuest: false,
+      sessionId: 'upgraded-session',
+    });
+    expect(guest.connected).toEqual(true);
+    expect(
+      wsServer.getStateBoardUsers(board.id).find((node) => node.id === guestId)
+        ?.content,
+    ).toMatchObject({ name: 'Signed Up', isGuest: false });
 
     guest.close();
   });

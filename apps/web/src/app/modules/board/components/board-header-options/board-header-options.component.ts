@@ -17,13 +17,19 @@ import { ConfigService } from '../../../../services/config.service';
 import { MatButtonModule } from '@angular/material/button';
 import { BoardFacade } from '../../../../services/board-facade.service';
 import { BoardMembersComponent } from '../board-members/board-members.component';
+import { UserNotificationsComponent } from '../../../home/components/user-notifications/users-notifications.component';
 
 @Component({
   selector: 'tapiz-board-header-options',
   templateUrl: './board-header-options.component.html',
   styleUrls: ['./board-header-options.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatIconModule, MatDialogModule, MatButtonModule],
+  imports: [
+    MatIconModule,
+    MatDialogModule,
+    MatButtonModule,
+    UserNotificationsComponent,
+  ],
 })
 export class BoardHeaderOptionsComponent {
   #exportService = inject(ExportService);

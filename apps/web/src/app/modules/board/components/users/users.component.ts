@@ -54,6 +54,8 @@ export class UsersComponent {
         return {
           ...user,
           picture: boardUser?.picture,
+          // guests pick any name, the suffix keeps them from passing as members
+          label: user.isGuest ? `${user.name} (guest)` : user.name,
         };
       });
   });

@@ -63,4 +63,14 @@ form {
     font-size: var(--font-size-12);
     font-weight: 400;
   }
+
+  .guest-chip {
+    background: var(--grey-20);
+    border-radius: var(--radius-4);
+    color: var(--grey-70);
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    margin-inline-start: var(--spacing-2);
+    padding: 0 var(--spacing-2);
+  }
 }

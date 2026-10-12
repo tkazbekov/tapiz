@@ -1,11 +1,17 @@
-import { Component, provideZonelessChangeDetection } from '@angular/core';
+import {
+  Component,
+  provideZonelessChangeDetection,
+  signal,
+} from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
 import { provideRouter } from '@angular/router';
+import { Store } from '@ngrx/store';
 import { NEVER, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthApiService } from '../../../../services/auth-api.service';
 import { AuthLayoutComponent } from '../../components/auth-layout/auth-layout.component';
+import { WsService } from '../../../ws/services/ws.service';
 import { ResetPasswordComponent } from './reset-password.component';
 
 // JIT tests can't load scss or signal inputs of local components
@@ -13,16 +19,25 @@ import { ResetPasswordComponent } from './reset-password.component';
 class AuthLayoutStubComponent {}
 
 describe('ResetPasswordComponent', () => {
+  const userId = signal<string | null>(null);
   let confirmReset: ReturnType<typeof vi.fn>;
+  let wsService: {
+    close: ReturnType<typeof vi.fn>;
+    listen: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
+    userId.set(null);
     confirmReset = vi.fn();
+    wsService = { close: vi.fn(), listen: vi.fn() };
 
     TestBed.configureTestingModule({
       providers: [
         provideZonelessChangeDetection(),
         provideRouter([]),
+        { provide: Store, useValue: { selectSignal: () => userId } },
         { provide: AuthApiService, useValue: { confirmReset } },
+        { provide: WsService, useValue: wsService },
       ],
     });
 
@@ -91,6 +106,37 @@ describe('ResetPasswordComponent', () => {
     });
     expect(component.invalidToken()).toBe(true);
     expect(component.loading()).toBe(false);
+  });
+
+  it('closes the socket before the reset ends its session', () => {
+    history.replaceState(null, '', '/reset-password#token=abc');
+    userId.set('user-1');
+    confirmReset.mockImplementationOnce(() => {
+      expect(wsService.close).toHaveBeenCalled();
+
+      return throwError(() => new HttpErrorResponse({ status: 500 }));
+    });
+
+    const component = create();
+    component.form.controls.password.setValue('new-password');
+    component.submit();
+
+    expect(confirmReset).toHaveBeenCalled();
+    // the session survives a failed reset, so the socket comes back
+    expect(wsService.listen).toHaveBeenCalled();
+  });
+
+  it('keeps the socket closed after a failed reset while signed out', () => {
+    history.replaceState(null, '', '/reset-password#token=abc');
+    confirmReset.mockReturnValueOnce(
+      throwError(() => new HttpErrorResponse({ status: 500 })),
+    );
+
+    const component = create();
+    component.form.controls.password.setValue('new-password');
+    component.submit();
+
+    expect(wsService.listen).not.toHaveBeenCalled();
   });
 
   it('does not send a password shorter than 8 characters', () => {

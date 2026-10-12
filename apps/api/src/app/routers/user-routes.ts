@@ -60,14 +60,7 @@ export const userRouter = router({
         }
 
         // guests can't administer boards
-        let newOwner: (typeof members)[number] | undefined;
-
-        for (const member of members) {
-          if ((await db.user.getUser(member.id))?.isGuest === false) {
-            newOwner = member;
-            break;
-          }
-        }
+        const newOwner = members.find((member) => !member.isGuest);
 
         if (newOwner) {
           await db.board.changeRole(board.id, newOwner.id, 'admin');

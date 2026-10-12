@@ -19,6 +19,14 @@ export const APP_ROUTES: Routes = [
     canActivate: [boardGuard],
   },
   {
+    // guest entry for link-shared boards, boardGuard sends anonymous visitors here
+    path: 'join/:boardId',
+    loadComponent: () =>
+      import('./modules/auth/pages/board-join/board-join.component').then(
+        (mod) => mod.BoardJoinComponent,
+      ),
+  },
+  {
     path: 'login',
     loadComponent: () =>
       import('./modules/auth/pages/login/login.component').then(

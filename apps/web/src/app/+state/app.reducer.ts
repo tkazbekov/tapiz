@@ -43,5 +43,6 @@ export const appFeature = createFeature({
   reducer,
   extraSelectors: ({ selectUser }) => ({
     selectUserId: createSelector(selectUser, (user) => user?.id ?? ''),
+    selectIsGuest: createSelector(selectUser, (user) => !!user?.isGuest),
   }),
 });

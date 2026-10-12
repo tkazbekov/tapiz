@@ -1,4 +1,9 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  signal,
+} from '@angular/core';
 
 import { MatIconModule } from '@angular/material/icon';
 import { MatDialogModule } from '@angular/material/dialog';
@@ -85,12 +90,24 @@ import { ConfigService } from '../../../../services/config.service';
           (change)="newVisibility($event.value)"
           [(ngModel)]="visibility"
           aria-label="Board visibility">
-          <mat-button-toggle value="private">Only Team</mat-button-toggle>
+          <mat-button-toggle value="private">Restricted</mat-button-toggle>
           <mat-button-toggle value="public"
-            >Everyone with the url</mat-button-toggle
+            >Anyone with the link</mat-button-toggle
           >
         </mat-button-toggle-group>
       }
+
+      <p class="visibility-help">
+        @if (visibility() === 'public') {
+          Anyone with the link can view and edit — no account needed; they join
+          as guests.
+        } @else {
+          Only board admins{{
+            teamName() ? ' and members of ' + teamName() : ''
+          }}
+          can open it.
+        }
+      </p>
     }
   `,
   styleUrls: ['./share-board.component.scss'],
@@ -104,12 +121,12 @@ export class ShareBoardComponent {
   #position = this.#store.selectSignal(boardPageFeature.selectPosition);
   #isPublic = this.#store.selectSignal(boardPageFeature.selectIsPublic);
   isAdmin = this.#store.selectSignal(boardPageFeature.selectIsAdmin);
+  teamName = this.#store.selectSignal(boardPageFeature.selectTeamName);
   url = '';
-  visibility = 'private';
+  visibility = signal(this.#isPublic() ? 'public' : 'private');
 
   constructor() {
     this.url = this.getUrl();
-    this.visibility = this.#isPublic() ? 'public' : 'private';
   }
 
   get isDemo() {
@@ -122,6 +139,12 @@ export class ShareBoardComponent {
         isPublic: visibility === 'public',
       }),
     );
+
+    if (visibility === 'private') {
+      this.#snackBar.open('Guests lose access immediately.', 'Close', {
+        duration: 4000,
+      });
+    }
   }
 
   includePosition(checked: boolean) {

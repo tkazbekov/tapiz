@@ -1,8 +1,12 @@
 import { Injectable, inject } from '@angular/core';
 import { ConfigService } from './config.service';
 import { HttpClient } from '@angular/common/http';
-import { Observable, map, switchMap, take, zip } from 'rxjs';
+import { Router } from '@angular/router';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { EMPTY, Observable, catchError, map, switchMap, take, zip } from 'rxjs';
 import { boardPageFeature } from '../modules/board/reducers/boardPage.reducer';
+import { appFeature } from '../+state/app.reducer';
+import { authErrorCode } from '../modules/auth/auth-errors';
 import { Store } from '@ngrx/store';
 import { getImageDimensions } from '@tapiz/cdk/utils/image-dimensions';
 import { BoardActions } from '../modules/board/actions/board.actions';
@@ -18,6 +22,9 @@ export class FileUploadService {
   #http = inject(HttpClient);
   #store = inject(Store);
   #nodesActions = inject(NodesActions);
+  #snackBar = inject(MatSnackBar);
+  #router = inject(Router);
+  #isGuest = this.#store.selectSignal(appFeature.selectIsGuest);
 
   upload(boardId: string, file: File): Observable<{ url: string }> {
     if (this.#configService.config.DEMO) {
@@ -50,6 +57,18 @@ export class FileUploadService {
       y: number;
     },
   ): void {
+    const images = files.filter((file) => file.type.startsWith('image'));
+
+    if (!images.length) {
+      return;
+    }
+
+    // the api refuses guest uploads too, this saves the round trip
+    if (this.#isGuest()) {
+      this.#accountRequired();
+      return;
+    }
+
     this.#store.dispatch(BoardPageActions.setLoadingBar({ loadingBar: true }));
 
     zip(
@@ -60,8 +79,6 @@ export class FileUploadService {
     )
       .pipe(take(1))
       .subscribe(([zoom, position, boardId, layer]) => {
-        const images = files.filter((file) => file.type.startsWith('image'));
-
         images.forEach((image) => {
           this.upload(boardId, image)
             .pipe(
@@ -78,6 +95,21 @@ export class FileUploadService {
                     };
                   }),
                 );
+              }),
+              catchError((error) => {
+                this.#store.dispatch(
+                  BoardPageActions.setLoadingBar({ loadingBar: false }),
+                );
+
+                if (authErrorCode(error) === 'ACCOUNT_REQUIRED') {
+                  this.#accountRequired();
+                } else {
+                  this.#snackBar.open('Could not upload the image', 'Close', {
+                    duration: 4000,
+                  });
+                }
+
+                return EMPTY;
               }),
             )
             .subscribe(({ url, width, height }) => {
@@ -117,6 +149,19 @@ export class FileUploadService {
                 }),
               );
             });
+        });
+      });
+  }
+
+  #accountRequired() {
+    this.#snackBar
+      .open('Create an account to upload images', 'Create account', {
+        duration: 6000,
+      })
+      .onAction()
+      .subscribe(() => {
+        void this.#router.navigate(['/register'], {
+          queryParams: { returnUrl: this.#router.url, from: 'guest' },
         });
       });
   }
