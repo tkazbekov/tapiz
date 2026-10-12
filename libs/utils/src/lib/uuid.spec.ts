@@ -15,7 +15,7 @@ describe('uuid', () => {
   it('falls back to getRandomValues outside secure contexts', () => {
     const webCrypto = globalThis.crypto;
     vi.stubGlobal('crypto', {
-      getRandomValues: <T extends ArrayBufferView>(array: T) =>
+      getRandomValues: (array: Uint8Array<ArrayBuffer>) =>
         webCrypto.getRandomValues(array),
     });
 

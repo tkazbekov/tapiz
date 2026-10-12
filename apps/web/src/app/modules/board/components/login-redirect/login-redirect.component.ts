@@ -1,4 +1,9 @@
-import { Component, OnInit, inject } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  inject,
+  ChangeDetectionStrategy,
+} from '@angular/core';
 import { Router } from '@angular/router';
 import { Store } from '@ngrx/store';
 import { AppActions } from '../../../../+state/app.actions';
@@ -7,6 +12,7 @@ import { AuthService } from '../../../../services/auth.service';
 @Component({
   selector: 'tapiz-login-redirect',
   template: '',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrls: [],
 })
 export class LoginRedirectComponent implements OnInit {

@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectionStrategy } from '@angular/core';
 import { PortalModule } from '@angular/cdk/portal';
 import { popupState } from './popup.state';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -14,6 +14,7 @@ import { map } from 'rxjs';
       }
     `,
   ],
+  changeDetection: ChangeDetectionStrategy.Eager,
   imports: [PortalModule],
 })
 export class PopupPortalComponent {

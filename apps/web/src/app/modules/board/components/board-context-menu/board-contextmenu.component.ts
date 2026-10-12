@@ -1,4 +1,9 @@
-import { Component, OnInit, inject } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  inject,
+  ChangeDetectionStrategy,
+} from '@angular/core';
 import { Store } from '@ngrx/store';
 import { NodesStore } from '../../services/nodes.store';
 import {
@@ -35,6 +40,7 @@ import { defaultNoteColor } from '../note';
       display: none;
     }
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
   imports: [MatDialogModule],
 })
 export class BoardContextMenuComponent implements OnInit {

@@ -7,7 +7,7 @@
     "strict": true,
     "moduleResolution": "bundler"
   },
-  "files": ["src/main.ts", "src/polyfills.ts", "src/types/index.d.ts"],
+  "files": ["src/main.ts", "src/types/index.d.ts"],
   "include": ["src/**/*.d.ts"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts"]
 }

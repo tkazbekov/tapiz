@@ -1,4 +1,10 @@
-import { Component, computed, input, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  input,
+  signal,
+  ChangeDetectionStrategy,
+} from '@angular/core';
 import { ArrowStrokeWidth, Point } from '@tapiz/board-commons';
 import { Arrow } from '@tapiz/board-commons/validators/arrow.validator';
 import { buildArrowPath, buildVisibleArrowPath } from '../arrow-path';
@@ -66,6 +72,7 @@ type HeadPos = 'start' | 'end';
         [attr.marker-end]="hasEndHead() ? 'url(#' + markerId() + ')' : null" />
     </svg>
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
   styles: `
     :host,
     svg {

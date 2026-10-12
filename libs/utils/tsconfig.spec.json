@@ -8,7 +8,9 @@
       "vite/client",
       "node",
       "vitest"
-    ]
+    ],
+    "module": "esnext",
+    "moduleResolution": "bundler"
   },
   "include": [
     "vite.config.ts",

@@ -1,18 +1,15 @@
-/// <reference types='vitest' />
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
-
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
   root: import.meta.dirname,
   cacheDir: '../../node_modules/.vite/libs/nodes',
-  plugins: [tsconfigPaths()],
+  resolve: {
+    tsconfigPaths: true,
+  },
   test: {
     watch: false,
     globals: true,
-    cache: {
-      dir: '../../node_modules/.vitest',
-    },
     environment: 'jsdom',
     setupFiles: ['src/test-setup.ts'],
     include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],

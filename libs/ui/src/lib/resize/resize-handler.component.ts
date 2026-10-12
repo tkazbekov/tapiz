@@ -4,6 +4,7 @@ import {
   ElementRef,
   ViewChild,
   inject,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 
 import { MoveService } from '@tapiz/cdk/services/move.service';
@@ -37,6 +38,7 @@ import { ResizeEvent } from './resize.model';
 
     <p class="size">{{ width }} x {{ height }}</p>
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
       :host {

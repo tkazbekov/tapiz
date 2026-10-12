@@ -5,6 +5,7 @@ import {
   afterNextRender,
   inject,
   output,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 
 import { MoveService } from '@tapiz/cdk/services/move.service';
@@ -18,6 +19,7 @@ import { ResizeEvent } from './resize.model';
   selector: 'tapiz-resize-single',
   imports: [],
   template: '<ng-content></ng-content>',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styles: `
     :host {
       bottom: 0;

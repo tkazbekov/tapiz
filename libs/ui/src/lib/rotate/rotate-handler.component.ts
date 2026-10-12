@@ -4,6 +4,7 @@ import {
   ElementRef,
   ViewChild,
   inject,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 
 import { MoveService } from '@tapiz/cdk/services/move.service';
@@ -24,6 +25,7 @@ import { input } from '@angular/core';
       <mat-icon class="mat-icon">refresh</mat-icon>
     </div>
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
       .rotate {

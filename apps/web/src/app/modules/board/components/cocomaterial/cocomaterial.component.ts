@@ -7,6 +7,7 @@ import {
   inject,
   signal,
   output,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
@@ -53,6 +54,7 @@ const DEFAULT_SIZE = 150;
   ],
   providers: [CocomaterialStore],
   templateUrl: './cocomaterial.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrls: ['./cocomaterial.component.scss'],
 })
 export class CocomaterialComponent {

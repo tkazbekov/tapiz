@@ -11,7 +11,11 @@ import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideStore } from '@ngrx/store';
 import { provideRouterStore, routerReducer } from '@ngrx/router-store';
 import { bootstrapApplication } from '@angular/platform-browser';
-import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import {
+  provideHttpClient,
+  withInterceptors,
+  withXhr,
+} from '@angular/common/http';
 import { APP_CONFIG } from './app/services/config.service';
 import { appFeature } from './app/+state/app.reducer';
 import { APP_ROUTES } from './app/app.routes';
@@ -57,7 +61,7 @@ bootstrapApplication(AppComponent, {
     provideEffects(appEffects),
     provideRouterStore(),
 
-    provideHttpClient(withInterceptors([authInterceptor])),
+    provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
     provideRouter(APP_ROUTES, withComponentInputBinding()),
     provideZonelessChangeDetection(),
     provideBrowserGlobalErrorListeners(),

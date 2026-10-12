@@ -23,7 +23,8 @@
     "allowSyntheticDefaultImports": true,
     "emitDecoratorMetadata": false,
     "moduleResolution": "bundler",
-    "module": "preserve"
+    "module": "preserve",
+    "ignoreDeprecations": "6.0"
   },
   "angularCompilerOptions": {
     "typeCheckHostBindings": true,

@@ -107,10 +107,13 @@ export class NodeSpaceComponent implements AfterViewInit {
     return this.drag.nativeElement;
   }
 
+  // `node` is only referenced by the type predicate (template narrowing).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   isResizable(node: TuNode<unknown>): node is TuNode<Resizable> {
     return this.resize();
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   isRotable(node: TuNode<unknown>): node is TuNode<Rotatable> {
     return this.rotate();
   }
