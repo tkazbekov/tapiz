@@ -20,7 +20,7 @@ import { BoardActions } from './estimation.component';
 import { FormsModule } from '@angular/forms';
 import { InitEstimationComponent } from './init-estimation/init-estimation.component';
 import { EstimationStoriesComponent } from './estimation-stories/estimation-stories.component';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
 import { EstimationWorkspaceComponent } from './estimation-workspace/estimation-workspace.component';
@@ -157,7 +157,7 @@ export class EstimationComponent {
 
   public onCompleteSetup(scale: EstimationConfig['scale']) {
     const estimationConfig: EstimationConfigNode = {
-      id: v4(),
+      id: uuid(),
       type: 'estimation.config',
       children: [],
       content: {
@@ -319,7 +319,7 @@ export class EstimationComponent {
 
     if (!resultsNode) {
       resultsNode = {
-        id: v4(),
+        id: uuid(),
         type: 'estimation.result',
         content: {
           userId: this.userId(),

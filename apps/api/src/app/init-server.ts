@@ -4,7 +4,6 @@ import { AppRouter, appRouter } from './routers/index.js';
 import fastifyCookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import fastifyIO from 'fastify-socket.io';
-import { parse } from 'cookie';
 import customParser from 'socket.io-msgpack-parser';
 
 import {
@@ -111,7 +110,7 @@ fastify.register(async function (fastify) {
     fastify.io.on('connection', (socket) => {
       boardServer.connection(
         socket,
-        parse(socket.request.headers.cookie ?? ''),
+        fastify.parseCookie(socket.request.headers.cookie ?? ''),
       );
     });
   });

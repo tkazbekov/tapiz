@@ -12,7 +12,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { BoardPageActions } from '../../actions/board-page.actions';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
 import { BoardActions } from '../estimation/estimation.component';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { BoardSettings, isSettings } from '@tapiz/board-commons';
 
 @Component({
@@ -136,7 +136,7 @@ export class SetBoardCenterComponent {
             {
               data: {
                 type: 'settings',
-                id: v4(),
+                id: uuid(),
                 content: settingsContent,
               },
               op: 'add',

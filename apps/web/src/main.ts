@@ -10,7 +10,6 @@ import { AppComponent } from './app/app.component';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { provideStore } from '@ngrx/store';
 import { provideRouterStore, routerReducer } from '@ngrx/router-store';
-import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { APP_CONFIG } from './app/services/config.service';
@@ -22,7 +21,6 @@ import { authInterceptor } from './app/commons/api-rest-interceptor/api-rest-int
 import { provideEffects } from '@ngrx/effects';
 import * as appEffects from './app/+state/app.effects';
 import { debugMetaReducers } from './app/debug/meta-reducer';
-import { Eye, EyeClosed, MoveRight, LucideAngularModule } from 'lucide-angular';
 
 export function prefersReducedMotion(): boolean {
   const mediaQueryList = window.matchMedia('(prefers-reduced-motion)');
@@ -38,7 +36,6 @@ bootstrapApplication(AppComponent, {
   providers: [
     { provide: APP_CONFIG, useValue: environment },
     importProvidersFrom(MatSnackBarModule),
-    provideAnimationsAsync(),
     provideStore(
       {
         app: appFeature.reducer,
@@ -69,8 +66,5 @@ bootstrapApplication(AppComponent, {
       useValue: { appearance: 'outline', subscriptSizing: 'dynamic' },
     },
     environment.providers,
-    importProvidersFrom(
-      LucideAngularModule.pick({ EyeClosed, Eye, MoveRight }),
-    ),
   ],
 }).catch((err) => console.error(err));

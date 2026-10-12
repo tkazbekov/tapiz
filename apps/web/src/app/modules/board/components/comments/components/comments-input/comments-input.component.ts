@@ -9,7 +9,7 @@ import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { CommentNode } from '@tapiz/board-commons';
 
 @Component({
@@ -68,7 +68,7 @@ export class CommentsInputComponent {
     }
 
     const comment: CommentNode = {
-      id: v4(),
+      id: uuid(),
       type: 'comment',
       content: {
         text: this.text.value,

@@ -1,39 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { LiveReactionStore } from './live-reaction.store';
-import {
-  trigger,
-  state,
-  style,
-  transition,
-  animate,
-} from '@angular/animations';
 
 const EMOJI_SIZE = 200 as const;
 
 @Component({
   selector: 'tapiz-live-reaction-wall',
   imports: [],
-  animations: [
-    trigger('fadeInOut', [
-      state(
-        'void',
-        style({
-          opacity: 0,
-        }),
-      ),
-      state(
-        '*',
-        style({
-          opacity: 1,
-        }),
-      ),
-      transition('* => *', [animate('0.1s')]),
-    ]),
-  ],
   template: `
     @for (emoji of emojis(); track $index) {
       <div
-        [@fadeInOut]
+        animate.enter="fade-in"
+        animate.leave="fade-out"
         class="emoji"
         [style.left.px]="emoji.position.x - EMOJI_SIZE / 2"
         [style.top.px]="emoji.position.y - EMOJI_SIZE / 2">

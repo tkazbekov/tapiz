@@ -21,7 +21,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { PollConfigComponent } from './components/poll-config/poll-config.component';
 import { PollOptionsComponent } from './components/poll-options/poll-options.component';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 
 import { PollResultsComponent } from './components/poll-results/poll-results.component';
 import { BoardActions } from '@tapiz/board-commons/actions/board.actions';
@@ -164,7 +164,7 @@ export class PollBoardComponent implements AfterViewInit {
               op: 'add',
               parent: this.node().id,
               data: {
-                id: v4(),
+                id: uuid(),
                 type: 'poll.answer',
                 content: {
                   optionId,

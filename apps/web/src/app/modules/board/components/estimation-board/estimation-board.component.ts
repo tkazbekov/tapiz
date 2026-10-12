@@ -15,7 +15,7 @@ import {
 import { EstimationNodes, EstimationBoardNode } from '@tapiz/board-commons';
 import { MatIconModule } from '@angular/material/icon';
 import { EstimationComponent } from '../estimation/estimation.component';
-import * as R from 'remeda';
+import { deepEqual } from '@tapiz/utils/deep-equal';
 import { MultiDragService } from '@tapiz/cdk/services/multi-drag.service';
 import { NodesStore } from '../../services/nodes.store';
 import { toObservable } from '@angular/core/rxjs-interop';
@@ -84,7 +84,7 @@ export class EstimationBoardComponent implements AfterViewInit, OnInit {
     }).subscribe((node) => {
       const children = node.children ?? [];
 
-      if (!R.isDeepEqual(children, this.estimation())) {
+      if (!deepEqual(children, this.estimation())) {
         this.estimation.set(node.children ?? []);
       }
     });

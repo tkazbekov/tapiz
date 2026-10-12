@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { PollBoard, PollBoardNode, PollOption } from '@tapiz/board-commons';
 import { MatIconModule } from '@angular/material/icon';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import {
   FormArray,
   FormControl,
@@ -151,7 +151,7 @@ export class PollConfigComponent {
     const options: PollOption[] = this.optionsField.controls
       .map((control) => control.value)
       .filter((text): text is string => !!text?.trim())
-      .map((text) => ({ id: v4(), text }));
+      .map((text) => ({ id: uuid(), text }));
 
     this.nodeChange.emit({
       options,

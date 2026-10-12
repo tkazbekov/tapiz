@@ -11,7 +11,7 @@ import { BoardFacade } from '../../../../services/board-facade.service';
 import { MatIconModule } from '@angular/material/icon';
 import { isNote, StateActions } from '@tapiz/board-commons';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
-import { LucideAngularModule } from 'lucide-angular';
+import { LucideEye, LucideEyeClosed } from '@lucide/angular';
 
 @Component({
   selector: 'tapiz-notes-visibility',
@@ -22,7 +22,8 @@ import { LucideAngularModule } from 'lucide-angular';
     CdkMenu,
     MatIconModule,
     CdkMenuItemRadio,
-    LucideAngularModule,
+    LucideEye,
+    LucideEyeClosed,
   ],
   template: `
     <div class="right-col-toolbar note-visibility">
@@ -33,14 +34,14 @@ import { LucideAngularModule } from 'lucide-angular';
         <div class="value">
           @if (visible()) {
             Public
-            <lucide-icon
-              name="eye"
-              size="18" />
+            <svg
+              lucideEye
+              size="18"></svg>
           } @else {
             Private
-            <lucide-icon
-              name="eye-closed"
-              size="18" />
+            <svg
+              lucideEyeClosed
+              size="18"></svg>
           }
         </div>
       </button>

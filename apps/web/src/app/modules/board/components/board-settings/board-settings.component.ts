@@ -14,7 +14,7 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { Store } from '@ngrx/store';
 import { BoardActions } from '../../actions/board.actions';
 import { BoardPageActions } from '../../actions/board-page.actions';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { BoardFacade } from '../../../../services/board-facade.service';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
 import { ColorPickerComponent } from '@tapiz/ui/color-picker';
@@ -232,7 +232,7 @@ export class BoardSettingsComponent {
             {
               data: {
                 type: 'settings',
-                id: v4(),
+                id: uuid(),
                 content: this.form.value,
               },
               op: 'add',

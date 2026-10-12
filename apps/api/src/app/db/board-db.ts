@@ -19,7 +19,7 @@ import type {
   TuNode,
   UserNode,
 } from '@tapiz/board-commons';
-import { SetNonNullable } from 'type-fest';
+import type { SetNonNullable } from './types.js';
 import * as team from './team-db.js';
 import { getUserTeam } from './team-db.js';
 import { deleteBoardFiles } from '../file-upload.js';

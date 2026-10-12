@@ -9,7 +9,6 @@ import { type Socket } from 'socket.io';
 import db from './db/index.js';
 import { validation } from './validation.js';
 import { z } from 'zod/v4';
-import * as R from 'remeda';
 import { haveAccess } from './db/board-db.js';
 import { haveAccessTeam } from './db/team-db.js';
 
@@ -99,12 +98,16 @@ export class Client {
       if ('action' in messages[0] && messages[0].action === 'join') {
         await this.join(messages[0]);
       } else {
-        const [broadcast, stateActions] = R.partition(
-          messages,
-          (it: Record<string, unknown>) => {
-            return it['type'] === BoardCommonActions.broadcast;
-          },
-        );
+        const broadcast: Record<string, unknown>[] = [];
+        const stateActions: Record<string, unknown>[] = [];
+
+        for (const it of messages as Record<string, unknown>[]) {
+          if (it['type'] === BoardCommonActions.broadcast) {
+            broadcast.push(it);
+          } else {
+            stateActions.push(it);
+          }
+        }
 
         if (!this.boardId) {
           return [];

@@ -8,7 +8,7 @@ import { NotificationService } from '../../../shared/notification/notification.s
 import { ConfigService } from '../../../services/config.service';
 
 import { io } from 'socket.io-client';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { GlobalStore } from '../../../+state/global.store';
 
@@ -27,7 +27,7 @@ export class WsService {
     transports: ['websocket', 'webtransport'],
     parser: customParser,
   });
-  correlationId = v4();
+  correlationId = uuid();
   #reconnect = new Subject<void>();
   #connected = new BehaviorSubject<boolean>(false);
   #globalStore = inject(GlobalStore);

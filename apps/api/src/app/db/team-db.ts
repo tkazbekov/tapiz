@@ -7,7 +7,7 @@ import {
   TeamMember,
   UserTeam,
 } from '@tapiz/board-commons';
-import { SetNonNullable } from 'type-fest';
+import type { SetNonNullable } from './types.js';
 import { getUsersBoardsByTeam } from './board-db.js';
 
 export async function createTeam(

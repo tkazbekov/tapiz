@@ -1,11 +1,11 @@
 import { ChangeDetectionStrategy, Component, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { LucideAngularModule } from 'lucide-angular';
+import { LucideMoveRight } from '@lucide/angular';
 
 @Component({
   selector: 'tapiz-tools',
-  imports: [MatButtonModule, MatIconModule, LucideAngularModule],
+  imports: [MatButtonModule, MatIconModule, LucideMoveRight],
   templateUrl: './tools.component.html',
   styleUrl: './tools.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

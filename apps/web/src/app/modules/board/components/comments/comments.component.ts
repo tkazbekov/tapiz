@@ -12,7 +12,6 @@ import { CommentsStore } from './comments.store';
 import { CommentsInputComponent } from './components/comments-input/comments-input.component';
 import { TimeAgoPipe } from '@tapiz/cdk/pipes/time-ago';
 import { MatButtonModule } from '@angular/material/button';
-import { animate, style, transition, trigger } from '@angular/animations';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { delay, map, startWith, take } from 'rxjs/operators';
 import { CommentNode } from '@tapiz/board-commons';
@@ -29,16 +28,6 @@ import { boardPageFeature } from '../../reducers/boardPage.reducer';
     TimeAgoPipe,
     MatButtonModule,
   ],
-  animations: [
-    trigger('fade', [
-      transition(':enter', [
-        style({
-          opacity: 0,
-        }),
-        animate('200ms ease-in', style({ opacity: 1 })),
-      ]),
-    ]),
-  ],
   template: `
     @if (commentsStore.parentNodeId(); as parentNodeId) {
       <div class="wrapper">
@@ -52,12 +41,11 @@ import { boardPageFeature } from '../../reducers/boardPage.reducer';
         <div
           #commentWrapper
           board-noscroll
-          [@.disabled]="animationDisabled()"
           class="comments">
           @for (comment of comments(); track $index) {
             <div
               class="comment"
-              @fade>
+              [animate.enter]="animationDisabled() ? '' : 'fade-in'">
               <div class="comment-header">
                 <span class="username">{{ comment.username }}</span>
                 <span class="date">{{ comment.date | timeAgo }}</span>

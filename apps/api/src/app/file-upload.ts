@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
 import db from './db/index.js';
 import path from 'path';
-import { v4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import FastifyMultipart, {
   MultipartFile,
   MultipartValue,
@@ -97,7 +97,7 @@ export async function fileUpload(fastify: FastifyInstance) {
         return { error: 'Error uploading file' };
       }
 
-      const fileName = v4() + '.webp';
+      const fileName = randomUUID() + '.webp';
 
       await sharp(data, {
         animated: true,

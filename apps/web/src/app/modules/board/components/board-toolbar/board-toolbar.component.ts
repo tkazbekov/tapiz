@@ -48,7 +48,7 @@ import { isInputField } from '@tapiz/cdk/utils/is-input-field';
 import { ToolsComponent } from '../tools/tools.component';
 import { NgTemplateOutlet } from '@angular/common';
 import { BoardToolbardButtonComponent } from './components/board-toolboard-button.component';
-import { LucideAngularModule, Pin, PinOff } from 'lucide-angular';
+import { LucidePin, LucidePinOff } from '@lucide/angular';
 import { ArrowToolbarComponent } from '../arrows/arrow-toolbar/arrow-toolbar.component';
 import { PingStore } from '../ping/ping.store';
 import { TopVotedComponent } from '../top-voted/top-voted.component';
@@ -74,7 +74,8 @@ export class AppModule {}
     TopVotedComponent,
     NgTemplateOutlet,
     BoardToolbardButtonComponent,
-    LucideAngularModule,
+    LucidePin,
+    LucidePinOff,
     ArrowToolbarComponent,
   ],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
@@ -89,11 +90,6 @@ export class BoardToolbarComponent {
   #zoneService = inject(ZoneService);
   #fileUploadService = inject(FileUploadService);
   #pingStore = inject(PingStore);
-
-  icons = {
-    pin: Pin,
-    pinOff: PinOff,
-  };
 
   toolbarSubscription?: Subscription;
   boardMode = this.#store.selectSignal(boardPageFeature.selectBoardMode);

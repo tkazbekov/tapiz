@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import customParser from 'socket.io-msgpack-parser';
 import readline from 'node:readline';
 
@@ -57,7 +57,7 @@ function createClient(index: number) {
     let interval: NodeJS.Timeout;
     let emits = 0;
     let init = false;
-    const noteId = uuidv4();
+    const noteId = randomUUID();
     const ownerId = `user_${index}_${Date.now()}`;
     const randomInitX = Math.random() * 1000;
     const randomInitY = Math.random() * 1000;

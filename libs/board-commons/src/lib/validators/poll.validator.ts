@@ -6,7 +6,6 @@ import {
   PollAnswerNode,
   PollBoardNode,
 } from '../models/poll.model.js';
-import { pick } from 'remeda';
 import { decrypt } from '@tapiz/utils/crypto.js';
 
 const pollBoard = z.object({
@@ -64,7 +63,17 @@ const POLL_VALIDATOR: NodeValidator = {
     }
 
     if (pollNode.content.finished && !newData.position && !newData.layer) {
-      newData = pick(newData, ['position', 'layer']);
+      const picked: Partial<PollBoardNode['content']> = {};
+
+      if ('position' in newData) {
+        picked.position = newData.position;
+      }
+
+      if ('layer' in newData) {
+        picked.layer = newData.layer;
+      }
+
+      newData = picked;
     }
 
     const validation = pollBoard.partial().safeParse(newData);

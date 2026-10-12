@@ -55,3 +55,17 @@
 tapiz-comments-input {
   margin-block-start: var(--spacing-4);
 }
+
+.fade-in {
+  animation: fade-in 200ms ease-in;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

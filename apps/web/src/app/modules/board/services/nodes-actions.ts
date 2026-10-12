@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { NodeAdd, NodePatch, TuNode } from '@tapiz/board-commons';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { BoardFacade } from '../../../services/board-facade.service';
 
 interface Options {
@@ -18,7 +18,7 @@ export class NodesActions {
     const nodeAdd: NodeAdd<T> = {
       data: {
         type,
-        id: v4(),
+        id: uuid(),
         content,
       },
       op: 'add',

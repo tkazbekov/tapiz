@@ -19,7 +19,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { EstimationStory } from '@tapiz/board-commons';
-import { v4 } from 'uuid';
+import { uuid } from '@tapiz/utils/uuid';
 import { output } from '@angular/core';
 import { input } from '@angular/core';
 import { RichTextEditorComponent } from '@tapiz/ui/rich-text-editor';
@@ -185,7 +185,7 @@ export class EstimationStoriesComponent implements OnInit {
 
   add(
     data: EstimationStory = {
-      id: v4(),
+      id: uuid(),
       title: '',
       description: '',
       show: false,

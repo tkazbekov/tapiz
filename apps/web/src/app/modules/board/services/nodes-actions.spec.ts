@@ -6,9 +6,9 @@ import { vi } from 'vitest';
 import { NodesActions } from './nodes-actions';
 import { BoardFacade } from '../../../services/board-facade.service';
 
-// Mock the external UUID function
-vi.mock('uuid', () => ({
-  v4: () => {
+// Mock the UUID helper
+vi.mock('@tapiz/utils/uuid', () => ({
+  uuid: () => {
     return 'test-uuid';
   },
 }));
