@@ -7,65 +7,63 @@ import { lucia } from '../auth.js';
 import { userSettingsValidator } from '@tapiz/board-commons/validators/user-settings.validator.js';
 import { withDefaultUserSettings } from '@tapiz/board-commons';
 import { generateApiToken, hashApiToken } from '../api-token.js';
+import { revokeBoardAccess } from '../global.js';
+import { deleteBoardFiles } from '../file-upload.js';
 
 export const userRouter = router({
   removeAccount: protectedProcedure.mutation(async (req) => {
-    await lucia.invalidateUserSessions(req.ctx.user.sub);
+    const userId = req.ctx.user.sub;
 
-    let teams = await db.team.getUserTeams(req.ctx.user.sub);
+    await lucia.invalidateUserSessions(userId);
 
-    teams = teams.filter(async (team) => {
-      const members = await db.team.getTeamMembers(team.id);
-
-      return members.length === 1;
-    });
-
-    const teamsWithMembers: string[] = [];
-    const teamsWithoutMembers: string[] = [];
-
-    for (const team of teams) {
+    // Team boards cascade with their team, so teams go first.
+    for (const team of await db.team.getUserTeams(userId)) {
       const members = await db.team.getTeamMembers(team.id);
 
       if (members.length === 1) {
-        teamsWithoutMembers.push(team.id);
-      } else {
-        teamsWithMembers.push(team.id);
+        const boards = await db.board.getBoardsByTeam(team.id);
+
+        for (const board of boards) {
+          await deleteBoardFiles(board.id);
+        }
+
+        await db.team.deleteTeam(team.id);
+        boards.forEach((board) => revokeBoardAccess(board.id));
+        continue;
+      }
+
+      const others = members.filter((member) => member.id !== userId);
+
+      if (!others.some((member) => member.role === 'admin')) {
+        await db.team.changeRole(team.id, others[0].id, 'admin');
       }
     }
 
-    teamsWithoutMembers.forEach(async (teamId) => {
-      await db.team.deleteTeam(teamId);
-    });
+    for (const board of await db.board.getAdminBoardIds(userId)) {
+      // team admins keep administering team boards
+      if (board.teamId) {
+        continue;
+      }
 
-    teamsWithMembers.forEach(async (teamId) => {
-      const members = await db.team.getTeamMembers(teamId);
+      const members = (await db.board.getBoardUsers(board.id)).filter(
+        (member) => member.id !== userId,
+      );
 
-      const newOwner = members.find((member) => member.id !== req.ctx.user.sub);
+      if (members.some((member) => member.role === 'admin')) {
+        continue;
+      }
+
+      const newOwner = members.at(0);
 
       if (newOwner) {
-        await db.team.changeRole(teamId, newOwner.id, 'admin');
+        await db.board.changeRole(board.id, newOwner.id, 'admin');
+      } else {
+        await db.board.deleteBoard(board.id);
+        revokeBoardAccess(board.id);
       }
-    });
+    }
 
-    const boards = await db.board.getBoards(req.ctx.user.sub);
-
-    boards.forEach(async (board) => {
-      const members = await db.board.getBoardUsers(board.id);
-
-      if (members.length === 1 && !board.teamId) {
-        db.board.deleteBoard(board.id);
-      } else if (members.length > 1) {
-        const newOwner = members.find(
-          (member) => member.id !== req.ctx.user.sub,
-        );
-
-        if (newOwner) {
-          await db.board.changeRole(board.id, newOwner.id, 'admin');
-        }
-      }
-    });
-
-    await db.user.deleteAccount(req.ctx.user.sub);
+    await db.user.deleteAccount(userId);
 
     return {
       success: true,

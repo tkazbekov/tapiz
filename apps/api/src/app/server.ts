@@ -18,6 +18,8 @@ export class Server {
   private state: Record<string, ReturnType<typeof syncNodeBox>> = {};
   private stateSubscriptions: Record<string, Subscription> = {};
   private boardSettings: Record<string, BoardSettings> = {};
+  // last state writes of emptied boards, awaited before a board is reloaded
+  private pendingFlush: Record<string, Promise<void>> = {};
 
   constructor(public io: WsServer) {}
 
@@ -29,7 +31,8 @@ export class Server {
       if (session && user) {
         const dbUser = await db.user.getUser(user.id);
 
-        if (dbUser) {
+        // the socket may have gone away while the session was validated
+        if (dbUser && socket.connected) {
           const client = new Client(
             socket,
             this,
@@ -39,6 +42,8 @@ export class Server {
           );
 
           this.clients.push(client);
+          // per-user room so user events reach every tab
+          socket.join(`user:${dbUser.id}`);
 
           socket.on('disconnect', () => {
             this.clientClose(client);
@@ -80,6 +85,8 @@ export class Server {
   }
 
   public async createBoard(boardId: string) {
+    await this.pendingFlush[boardId];
+
     if (!this.state[boardId]) {
       if (this.stateSubscriptions[boardId]) {
         this.emptyBoard(boardId);
@@ -116,7 +123,7 @@ export class Server {
         .sync()
         .pipe(throttleTime(2000))
         .subscribe((state) => {
-          db.board.updateBoard(boardId, state);
+          db.board.updateBoard(boardId, state).catch((e) => console.error(e));
         });
     }
   }
@@ -130,15 +137,31 @@ export class Server {
   }
 
   public setState(boardId: string, fn: (state: TuNode[]) => TuNode[]) {
+    if (!this.state[boardId]) {
+      return;
+    }
+
     const nextState = fn(this.state[boardId].get());
 
     this.updateBoard(boardId, nextState);
   }
 
   public emptyBoard(boardId: string) {
-    db.board.updateBoard(boardId, this.state[boardId].get());
+    if (this.state[boardId]) {
+      const flush: Promise<void> = db.board
+        .updateBoard(boardId, this.state[boardId].get())
+        .then(() => undefined)
+        .catch((e) => console.error(e))
+        .finally(() => {
+          if (this.pendingFlush[boardId] === flush) {
+            delete this.pendingFlush[boardId];
+          }
+        });
 
-    delete this.state[boardId];
+      this.pendingFlush[boardId] = flush;
+
+      delete this.state[boardId];
+    }
 
     if (this.stateSubscriptions[boardId]) {
       this.stateSubscriptions[boardId].unsubscribe();
@@ -170,7 +193,7 @@ export class Server {
               ...it,
               content: {
                 ...it.content,
-                username: user.content.name,
+                name: user.content.name,
                 connected: true,
               },
             };
@@ -186,10 +209,6 @@ export class Server {
         return state;
       });
     }
-  }
-
-  public getBoardUser(boardId: string, userId: UserNode['id']) {
-    return db.board.getBoardUser(boardId, userId);
   }
 
   public getBoardUsers(boardId: string) {

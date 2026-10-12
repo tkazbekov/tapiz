@@ -10,6 +10,8 @@ import type { AppContext } from '../app/app.context.js';
 import { Server } from '../app/server.js';
 import db from '../app/db/index.js';
 import { io } from 'socket.io-client';
+import { setServer } from '../app/global.js';
+import { createWsAllowRequest } from '../app/network.js';
 
 export async function errorCall(call: () => Promise<unknown>) {
   try {
@@ -53,10 +55,17 @@ export const createMultipleUsers = async (size = usersTest.length) => {
   }
 };
 
-// Test double: callers only need `user`; req/res/app/rateLimits are not wired.
+// Test double: callers only need `user`; req/res/app are not wired and every
+// rate limit allows the call.
 export const createTestContext = (
   user: ReturnType<typeof getAuth> | null,
-): AppContext => ({ user }) as unknown as AppContext;
+): AppContext =>
+  ({
+    user,
+    rateLimits: {
+      mentionBoardUser: async () => ({ isAllowed: true, isExceeded: false }),
+    },
+  }) as unknown as AppContext;
 
 export const getUserCaller = (userIndex: number) => {
   const createCaller = createCallerFactory(appRouter);
@@ -78,12 +87,14 @@ export const initTestServer = async (port: number): Promise<Server> => {
   });
 
   const io = new WsServer(fastify.server, {
+    allowRequest: createWsAllowRequest(),
     parser: customParser,
   });
 
   fastify.decorate('io', io);
 
   const server = new Server(io);
+  setServer(server);
 
   io.on('connection', (socket) => {
     server.connection(
@@ -99,15 +110,28 @@ export const initTestServer = async (port: number): Promise<Server> => {
   return server;
 };
 
-export const initWs = (port: number): Promise<ReturnType<typeof io>> => {
+interface WsOptions {
+  cookie?: string;
+  origin?: string;
+}
+
+const connectWs = (port: number, { cookie = 'auth=1', origin }: WsOptions) => {
+  return io(`ws://localhost:${port}`, {
+    transports: ['websocket'],
+    parser: customParser,
+    extraHeaders: {
+      Cookie: cookie,
+      ...(origin ? { Origin: origin } : {}),
+    },
+  });
+};
+
+export const initWs = (
+  port: number,
+  options: WsOptions = {},
+): Promise<ReturnType<typeof io>> => {
   return new Promise((resolve) => {
-    const ws = io(`ws://localhost:${port}`, {
-      transports: ['websocket'],
-      parser: customParser,
-      extraHeaders: {
-        Cookie: 'auth=1',
-      },
-    });
+    const ws = connectWs(port, options);
 
     ws.on('connect', () => {
       resolve(ws);
@@ -115,4 +139,29 @@ export const initWs = (port: number): Promise<ReturnType<typeof io>> => {
 
     ws.on('connect_error', console.error);
   });
+};
+
+// Resolves with whether the handshake was accepted.
+export const tryWs = (port: number, options: WsOptions = {}) => {
+  return new Promise<boolean>((resolve) => {
+    const ws = connectWs(port, options);
+
+    ws.on('connect', () => {
+      ws.close();
+      resolve(true);
+    });
+
+    ws.on('connect_error', () => {
+      ws.close();
+      resolve(false);
+    });
+  });
+};
+
+export const deleteTestBoards = async () => {
+  for (let i = 0; i < usersTest.length; i++) {
+    for (const board of await db.board.getAdminBoardIds(getAuth(i).sub)) {
+      await db.board.deleteBoard(board.id);
+    }
+  }
 };

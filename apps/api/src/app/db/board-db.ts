@@ -355,22 +355,24 @@ export async function deleteBoard(boardId: string) {
   return db.delete(schema.boards).where(eq(schema.boards.id, boardId));
 }
 
-export async function deleteUserBoards(userId: string) {
-  const boards = await db
+// Boards where the user holds an explicit admin role, without pagination.
+export async function getAdminBoardIds(userId: string) {
+  return db
     .select({
       id: schema.boards.id,
+      teamId: schema.boards.teamId,
     })
-    .from(schema.boards)
-    .leftJoin(
-      schema.acountsToBoards,
-      and(
-        eq(schema.boards.id, schema.acountsToBoards.boardId),
-        eq(schema.acountsToBoards.accountId, userId),
-      ),
+    .from(schema.acountsToBoards)
+    .innerJoin(
+      schema.boards,
+      eq(schema.boards.id, schema.acountsToBoards.boardId),
     )
-    .where(eq(schema.acountsToBoards.accountId, userId));
-
-  await Promise.all(boards.map((board) => deleteBoard(board.id)));
+    .where(
+      and(
+        eq(schema.acountsToBoards.accountId, userId),
+        eq(schema.acountsToBoards.role, 'admin'),
+      ),
+    );
 }
 
 export async function leaveBoard(userId: string, boardId: string) {
@@ -395,6 +397,17 @@ export async function joinBoard(
       boardId,
     })
     .onConflictDoNothing();
+}
+
+// Checks access and makes sure the user has an accounts_boards row.
+export async function ensureBoardMember(boardId: string, userId: string) {
+  if (!(await haveAccess(boardId, userId))) {
+    return null;
+  }
+
+  await joinBoard(userId, boardId);
+
+  return (await getBoardUser(boardId, userId)) ?? null;
 }
 
 export async function updateBoard(id: string, board: TuNode[]) {

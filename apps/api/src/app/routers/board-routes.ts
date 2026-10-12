@@ -80,8 +80,7 @@ export const boardRouter = router({
     if (owners.includes(req.ctx.user.sub)) {
       await db.board.deleteBoard(req.input.boardId);
 
-      revokeBoardAccess(req.input.boardId);
-
+      // notify subscribers before revoking drops them from the room
       sendEvent(
         {
           room: `board:${req.input.boardId}`,
@@ -92,6 +91,8 @@ export const boardRouter = router({
         },
         req.ctx.correlationId,
       );
+
+      revokeBoardAccess(req.input.boardId);
 
       return {
         success: true,
@@ -283,7 +284,7 @@ export const boardRouter = router({
     .input(
       z.object({
         boardId: z.uuid(),
-        nodeId: z.string().optional(),
+        nodeId: z.uuid().optional(),
         userId: z.string(),
       }),
     )
@@ -292,6 +293,17 @@ export const boardRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'You cannot mention yourself.',
+        });
+      }
+
+      const usersToMention = await db.board.getUsersToMention(
+        req.input.boardId,
+      );
+
+      if (!usersToMention.some((user) => user.id === req.input.userId)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'User is not a member of this board.',
         });
       }
 
@@ -315,7 +327,7 @@ export const boardRouter = router({
       const board = await db.board.getBoardBasic(req.input.boardId);
 
       if (mentionedUser && board) {
-        sendMentionNotificationEmail(
+        void sendMentionNotificationEmail(
           mentionedUser.email,
           board.id,
           board.name,
@@ -376,6 +388,8 @@ export const boardRouter = router({
         req.ctx.correlationId,
       );
 
+      checkBoardAccess(req.input.boardId);
+
       return {
         success: true,
       };
@@ -410,6 +424,8 @@ export const boardRouter = router({
         },
         req.ctx.correlationId,
       );
+
+      checkBoardAccess(req.input.boardId);
 
       return {
         success: true,

@@ -36,20 +36,7 @@ export class WsService {
   readonly reconnect$ = this.#reconnect.asObservable();
 
   constructor() {
-    this.#poolLoop();
-  }
-
-  getSocket() {
-    return this.#socket;
-  }
-
-  listen() {
-    if (this.#configService.config.DEMO) {
-      return;
-    }
-
-    this.#socket.connect();
-
+    // registered once; listen() may run again after a logout/login
     this.#socket.on('connect', () => {
       if (this.#connected.value) {
         this.#reconnect.next();
@@ -111,6 +98,23 @@ export class WsService {
         this.#router.navigate(['/']);
       }
     });
+
+    this.#poolLoop();
+  }
+
+  getSocket() {
+    return this.#socket;
+  }
+
+  listen() {
+    if (this.#configService.config.DEMO) {
+      return;
+    }
+
+    // no-op while connected or reconnecting
+    if (!this.#socket.active) {
+      this.#socket.connect();
+    }
   }
 
   send(obj: unknown[]) {

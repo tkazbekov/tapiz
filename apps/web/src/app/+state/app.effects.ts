@@ -3,7 +3,7 @@ import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { concatLatestFrom } from '@ngrx/operators';
 import { UserApiService } from '../services/user-api.service';
 import { AppActions } from './app.actions';
-import { EMPTY, exhaustMap, map, mergeMap, of } from 'rxjs';
+import { EMPTY, catchError, exhaustMap, filter, map, mergeMap, of } from 'rxjs';
 import { Router } from '@angular/router';
 import { Store } from '@ngrx/store';
 import { appFeature } from './app.reducer';
@@ -20,7 +20,8 @@ export const logout$ = createEffect(
     return actions$.pipe(
       ofType(AppActions.logout),
       exhaustMap(() => {
-        return userApiService.logout();
+        // clear the local session even if the server call fails
+        return userApiService.logout().pipe(catchError(() => of(null)));
       }),
       map(() => {
         document.cookie = '';
@@ -47,7 +48,7 @@ export const unauthorized$ = createEffect(
     return actions$.pipe(
       ofType(AppActions.unauthorized),
       concatLatestFrom(() => store.select(appFeature.selectUserId)),
-      mergeMap((userId) => {
+      mergeMap(([, userId]) => {
         if (userId) {
           if (router.url.includes('/board')) {
             router.navigate(['/404']);
@@ -73,6 +74,7 @@ export const fetchOnSetUser$ = createEffect(
   (actions$ = inject(Actions)) => {
     return actions$.pipe(
       ofType(AppActions.setUser, HomeActions.userEvent),
+      filter((action) => !('user' in action) || !!action.user),
       map(() => {
         return AppActions.fetchNotifications({ offset: 0 });
       }),
@@ -95,6 +97,7 @@ export const notifications$ = createEffect(
               offset,
             });
           }),
+          catchError(() => EMPTY),
         );
       }),
     );

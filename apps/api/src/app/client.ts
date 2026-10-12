@@ -25,6 +25,8 @@ export class Client {
   pendingMsgs: unknown[] = [];
   correlationId = '';
   private privateId = '';
+  // bumped by every join and leave so an older, still running join gives up
+  private joinSeq = 0;
 
   constructor(
     public socket: Socket,
@@ -39,10 +41,10 @@ export class Client {
       this.correlationId = correlationId;
     });
     this.socket.on('disconnect', () => {
-      this.close();
+      this.leave();
     });
     this.socket.on('leaveBoard', () => {
-      this.close();
+      this.leave();
     });
 
     // simulate disconnect
@@ -61,6 +63,11 @@ export class Client {
 
         if (validUser) {
           this.socket.join(`board:${id}`);
+
+          // access may have been revoked while it was checked
+          if (!(await haveAccess(id, this.id))) {
+            this.socket.leave(`board:${id}`);
+          }
         } else {
           this.unauthorizedClose();
           return;
@@ -161,20 +168,41 @@ export class Client {
     }
   }
 
-  async refreshAccess() {
-    if (!this.boardId) {
+  async refreshAccess(boardId = this.boardId) {
+    if (!boardId) {
       this.unauthorizedClose(false);
       return;
     }
 
-    const haveAccess = await db.board.haveAccess(this.boardId, this.id);
+    const haveAccess = await db.board.haveAccess(boardId, this.id);
 
     if (!haveAccess) {
-      this.unauthorizedClose(false);
+      this.revokeBoard(boardId);
       return;
     }
 
-    this.refreshIsAdmin();
+    if (boardId === this.boardId) {
+      await this.refreshIsAdmin();
+    }
+  }
+
+  // Drops the board subscription room and, if the client is on that board,
+  // leaves it so no further state actions are accepted.
+  revokeBoard(boardId: string) {
+    this.socket.leave(`board:${boardId}`);
+    this.socket.leave(boardId);
+
+    if (this.boardId !== boardId) {
+      return;
+    }
+
+    this.close();
+    this.unauthorizedClose(false);
+  }
+
+  private leave() {
+    this.joinSeq++;
+    this.close();
   }
 
   close() {
@@ -217,6 +245,9 @@ export class Client {
     };
 
     this.sendAll(this.boardId, this.getStateAction([action]));
+    // leave first so the room size no longer counts this socket
+    this.socket.leave(this.boardId);
+
     const roomSize =
       this.server.io.of('/').adapter.rooms.get(this.boardId)?.size || 0;
 
@@ -224,7 +255,6 @@ export class Client {
       this.server.emptyBoard(this.boardId);
     }
 
-    this.socket.leave(this.boardId);
     this.boardId = undefined;
     this.teamId = undefined;
   }
@@ -261,20 +291,53 @@ export class Client {
       return;
     }
 
-    const haveAccess = await db.board.haveAccess(message.boardId, this.id);
+    const boardId = result.data;
+    const joinId = ++this.joinSeq;
 
-    if (!haveAccess) {
+    // Nothing is mutated until access is confirmed.
+    const boardUser = await db.board.ensureBoardMember(boardId, this.id);
+
+    // a later join or a leave took over while access was checked
+    if (joinId !== this.joinSeq) {
+      return;
+    }
+
+    if (!boardUser) {
       this.unauthorizedClose();
       return;
     }
 
-    this.teamId =
-      (await db.board.getBoardBasic(message.boardId))?.teamId ?? undefined;
+    if (this.boardId && this.boardId !== boardId) {
+      this.close();
+    }
 
-    this.boardId = message.boardId;
+    this.teamId = boardUser.teamId ?? undefined;
+    this.boardId = boardId;
+    // in the room before the state loads, so a client leaving meanwhile
+    // doesn't empty the board under us
+    this.socket.join(boardId);
+
+    // A newer join or leave has already moved this client off the board (and
+    // out of its room); only drop a board state nobody else is using.
+    const isStale = () => {
+      if (joinId === this.joinSeq && this.boardId === boardId) {
+        return false;
+      }
+
+      if (!this.server.io.of('/').adapter.rooms.get(boardId)?.size) {
+        this.server.emptyBoard(boardId);
+      }
+
+      return true;
+    };
 
     try {
-      await this.server.createBoard(this.boardId);
+      await this.server.createBoard(boardId);
+
+      if (isStale()) {
+        return;
+      }
+
       const user: UserNode = {
         type: 'user',
         id: this.id,
@@ -287,14 +350,13 @@ export class Client {
         },
       };
 
-      const isAlreadyInBoard = this.server.isUserInBoard(this.boardId, this.id);
+      const isAlreadyInBoard = this.server.isUserInBoard(boardId, this.id);
 
-      this.server.userJoin(this.boardId, user);
+      this.server.userJoin(boardId, user);
 
-      const board = this.server.getBoard(this.boardId);
-      const boardUser = await this.server.getBoardUser(this.boardId, this.id);
+      const board = this.server.getBoard(boardId);
 
-      if (!boardUser || !board) {
+      if (!board) {
         return;
       }
 
@@ -303,6 +365,11 @@ export class Client {
       user.content.visible = userInBoard?.content.visible ?? false;
 
       await this.refreshIsAdmin();
+
+      if (isStale()) {
+        return;
+      }
+
       this.privateId = boardUser.privateId;
 
       const userAction: StateActions = {
@@ -310,13 +377,34 @@ export class Client {
         op: isAlreadyInBoard ? 'patch' : 'add',
       };
 
-      this.sendAll(this.boardId, this.getStateAction([userAction]));
+      this.sendAll(boardId, this.getStateAction([userAction]));
 
-      this.socket.join(this.boardId);
+      // access may have been revoked while joining
+      const stillHasAccess = await db.board.haveAccess(boardId, this.id);
 
-      this.sendToClient(this.getSetStateAction(board));
+      if (isStale()) {
+        return;
+      }
+
+      if (!stillHasAccess) {
+        this.close();
+        this.unauthorizedClose();
+        return;
+      }
+
+      // re-subscribe to board events too: after a reconnect the client only
+      // sends `join`
+      this.socket.join(`board:${boardId}`);
+
+      this.sendToClient(
+        this.getSetStateAction(this.server.getBoard(boardId) ?? board),
+      );
     } catch (e) {
       console.error(e);
+
+      if (!isStale()) {
+        this.close();
+      }
     }
   }
 

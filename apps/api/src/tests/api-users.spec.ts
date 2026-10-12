@@ -5,6 +5,7 @@ import db from '../app/db';
 import { startDB } from '../app/db/init-db';
 import { createMultipleUsers, getAuth, getUserCaller } from './test-helpers';
 import { vi } from 'vitest';
+import { addTeamMember } from '../app/db/user-db';
 
 describe('user', () => {
   beforeAll(async () => {
@@ -155,6 +156,70 @@ describe('user', () => {
     expect(teams[0].teamMember.role).toEqual('admin');
     expect(boards[0].isAdmin).toBeTruthy();
     expect(boards[1].isAdmin).toBeTruthy();
+  });
+
+  it('delete account handles more than 10 boards and shared teams', async () => {
+    const caller = await getUserCaller(20);
+    const member = getAuth(21).sub;
+    const coAdmin = getAuth(22).sub;
+    const user = getAuth(20).sub;
+
+    const soloBoards: string[] = [];
+
+    for (let i = 0; i < 12; i++) {
+      soloBoards.push((await caller.board.create({ name: `solo ${i}` })).id);
+    }
+
+    const sharedBoard = await caller.board.create({ name: 'shared' });
+    await db.board.joinBoard(member, sharedBoard.id);
+
+    const coAdminBoard = await caller.board.create({ name: 'co-admin' });
+    await db.board.joinBoard(coAdmin, coAdminBoard.id);
+    await db.board.joinBoard(member, coAdminBoard.id);
+    await db.board.changeRole(coAdminBoard.id, coAdmin, 'admin');
+
+    const soloTeam = await caller.team.new({ name: 'solo team' });
+    const soloTeamBoard = await caller.board.create({
+      name: 'solo team board',
+      teamId: soloTeam.id,
+    });
+
+    const sharedTeam = await caller.team.new({ name: 'shared team' });
+    await addTeamMember(member, sharedTeam.id, 'member');
+    const sharedTeamBoard = await caller.board.create({
+      name: 'shared team board',
+      teamId: sharedTeam.id,
+    });
+
+    await caller.user.removeAccount();
+
+    // everything is settled once the call resolves
+    expect(await db.user.getUser(user)).toBeFalsy();
+
+    for (const boardId of soloBoards) {
+      expect(await db.board.getBoard(boardId)).toBeFalsy();
+    }
+
+    expect((await db.board.getBoardUser(sharedBoard.id, member))?.role).toEqual(
+      'admin',
+    );
+
+    expect(
+      (await db.board.getBoardUser(coAdminBoard.id, coAdmin))?.role,
+    ).toEqual('admin');
+    expect(
+      (await db.board.getBoardUser(coAdminBoard.id, member))?.role,
+    ).toEqual('member');
+
+    expect(await db.team.getTeam(soloTeam.id)).toBeFalsy();
+    expect(await db.board.getBoard(soloTeamBoard.id)).toBeFalsy();
+
+    const sharedTeamMembers = await db.team.getTeamMembers(sharedTeam.id);
+
+    expect(sharedTeamMembers).toEqual([
+      expect.objectContaining({ id: member, role: 'admin' }),
+    ]);
+    expect(await db.board.getBoard(sharedTeamBoard.id)).toBeTruthy();
   });
 
   describe('invites', () => {

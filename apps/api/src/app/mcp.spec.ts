@@ -11,9 +11,9 @@ import {
 import { Server } from './server.js';
 import {
   createMultipleUsers,
+  deleteTestBoards,
   getAuth,
   getUserCaller,
-  usersTest,
 } from '../tests/test-helpers.js';
 
 describe('mcp', () => {
@@ -23,9 +23,7 @@ describe('mcp', () => {
   });
 
   afterAll(async () => {
-    for (let i = 0; i < usersTest.length; i++) {
-      await db.board.deleteUserBoards(getAuth(i).sub);
-    }
+    await deleteTestBoards();
   });
 
   it('exposes board-building guidance in server instructions', () => {

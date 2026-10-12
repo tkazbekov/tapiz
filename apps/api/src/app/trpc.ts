@@ -111,15 +111,7 @@ export const boardMemberProcedure = boardProcedure.use(async (opts) => {
   const { boardId } = opts.input;
   const userId = opts.ctx.user.sub;
 
-  const haveAccess = await db.board.haveAccess(boardId, userId);
-
-  if (!haveAccess) {
-    throw new TRPCError({ code: 'UNAUTHORIZED' });
-  }
-
-  await db.board.joinBoard(userId, boardId);
-
-  const userBoard = await db.board.getBoardUser(boardId, userId);
+  const userBoard = await db.board.ensureBoardMember(boardId, userId);
 
   if (!userBoard) {
     throw new TRPCError({ code: 'UNAUTHORIZED' });

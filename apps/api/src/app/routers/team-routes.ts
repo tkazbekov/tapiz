@@ -8,6 +8,7 @@ import {
 } from '../trpc.js';
 import db from '../db/index.js';
 import { checkTeamBoardsAccess, revokeBoardAccess } from '../global.js';
+import { deleteBoardFiles } from '../file-upload.js';
 import { sendEvent, sendUserEvent } from '../subscriptor.js';
 import {
   addBoardsToSpace,
@@ -110,7 +111,7 @@ export const teamRouter = router({
       const team = await db.team.getTeam(req.input.teamId);
 
       if (invitation && team) {
-        sendInvitationEmail(req.input.email, team.name, req.ctx.user.name);
+        void sendInvitationEmail(req.input.email, team.name, req.ctx.user.name);
       }
 
       return invitation;
@@ -119,6 +120,10 @@ export const teamRouter = router({
     .input(z.object({ teamId: z.uuid() }))
     .mutation(async (req) => {
       const boards = await db.board.getBoardsByTeam(req.input.teamId);
+
+      for (const board of boards) {
+        await deleteBoardFiles(board.id);
+      }
 
       boards.forEach((board) => {
         revokeBoardAccess(board.id);

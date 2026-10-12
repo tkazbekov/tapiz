@@ -12,33 +12,51 @@ import {
 } from '@trpc/server/adapters/fastify';
 import { Server } from './server.js';
 import { setServer } from './global.js';
-import { createUserSessionCookie, getAuthUrl, lucia } from './auth.js';
+import { createUserSessionCookie, getAuthUrl } from './auth.js';
 import { googleCallback } from './routers/auth-routes.js';
 import { fileUpload } from './file-upload.js';
 import { registerTapizMcp } from './mcp.js';
 import { registerAgentSessionRoute } from './agent-auth.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
 import db from './db/index.js';
+import {
+  createWsAllowRequest,
+  getFrontendOrigin,
+  parseTrustProxy,
+} from './network.js';
+
+const trustProxy = parseTrustProxy(process.env['TRUST_PROXY']);
+
+if (trustProxy !== false) {
+  console.warn(
+    `TRUST_PROXY=${process.env['TRUST_PROXY']}: client IPs come from X-Forwarded-For. ` +
+      'Only enable it when the API port is reachable through the proxy alone.',
+  );
+}
+
+const frontendOrigin = getFrontendOrigin();
+
+if (!frontendOrigin) {
+  console.warn('FRONTEND_URL is not set; cross-origin requests are rejected.');
+}
 
 const fastify = Fastify({
   logger: false,
+  trustProxy,
   routerOptions: {
     maxParamLength: 5000,
   },
 });
 
+// No connectionStateRecovery: recovered sockets would skip re-validation;
+// the web client re-joins its board on reconnect instead.
 fastify.decorate(
   'io',
   new WsServer(fastify.server, {
-    connectionStateRecovery: {
-      // the backup duration of the sessions and the packets
-      maxDisconnectionDuration: 2 * 60 * 1000,
-      // whether to skip middlewares upon successful recovery
-      skipMiddlewares: true,
-    },
+    allowRequest: createWsAllowRequest(),
     cors: {
       credentials: true,
-      origin: process.env['FRONTEND_URL'],
+      origin: frontendOrigin ?? false,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     },
     parser: customParser,
@@ -55,12 +73,24 @@ fastify.addHook('onClose', (instance, done) => {
   done();
 });
 
+// Order matters: cookies are parsed first and CORS runs before the rate
+// limiter so 429 responses still carry CORS headers.
+await fastify.register(fastifyCookie, {
+  hook: 'onRequest',
+  parseOptions: {},
+});
+
+await fastify.register(cors, {
+  credentials: true,
+  origin: frontendOrigin ?? false,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+});
+
+// The default key is the client IP (IPv6 grouped by /64), so a made-up cookie
+// no longer gets a fresh bucket.
 await fastify.register(import('@fastify/rate-limit'), {
   max: 150,
   timeWindow: '1 minute',
-  keyGenerator: (req) => {
-    return req.cookies[lucia.sessionCookieName] || req.ip;
-  },
 });
 
 const rateLimits = {
@@ -71,11 +101,6 @@ const rateLimits = {
 };
 
 fastify.register(fileUpload);
-
-fastify.register(fastifyCookie, {
-  hook: 'onRequest',
-  parseOptions: {},
-});
 
 fastify.register(fastifyTRPCPlugin, {
   prefix: '/api/trpc',
@@ -91,12 +116,6 @@ fastify.register(fastifyTRPCPlugin, {
       console.error(`Error in tRPC handler on path '${path}':`, error);
     },
   } satisfies FastifyTRPCPluginOptions<AppRouter>['trpcOptions'],
-});
-
-fastify.register(cors, {
-  credentials: true,
-  origin: true,
-  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
 });
 
 fastify.register(async function (fastify) {

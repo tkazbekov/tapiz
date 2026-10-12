@@ -30,7 +30,5 @@ export const sendUserEvent = (event: UserWsEvents) => {
     return;
   }
 
-  const currentUserClient = server.clients.find((it) => it.id === event.userId);
-
-  currentUserClient?.socket.emit('user', event);
+  server.io.to(`user:${event.userId}`).emit('user', event);
 };

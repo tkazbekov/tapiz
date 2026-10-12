@@ -2,10 +2,10 @@ import { startDB } from '../app/db/init-db';
 import db from '../app/db';
 import {
   createMultipleUsers,
+  deleteTestBoards,
   errorCall,
   getAuth,
   getUserCaller,
-  usersTest,
 } from './test-helpers';
 import { randProductName } from '@ngneat/falso';
 import { addTeamMember } from '../app/db/user-db';
@@ -28,9 +28,7 @@ describe('board', () => {
 
   afterAll(async () => {
     // delete all test useres boards
-    for (let i = 0; i < usersTest.length; i++) {
-      await db.board.deleteUserBoards(getAuth(i).sub);
-    }
+    await deleteTestBoards();
   });
 
   it('create board in team', async () => {
@@ -677,6 +675,84 @@ describe('board', () => {
       });
 
       expect(result?.code).toEqual('NOT_FOUND');
+    });
+  });
+
+  describe('mention board user', () => {
+    it('notifies a board member', async () => {
+      const caller = await getUserCaller(90);
+      const board = await caller.board.create({ name: 'mentions' });
+
+      await db.board.joinBoard(getAuth(91).sub, board.id);
+
+      const result = await caller.board.mentionBoardUser({
+        boardId: board.id,
+        userId: getAuth(91).sub,
+      });
+
+      expect(result.success).toEqual(true);
+
+      const notifications = await db.user.getUserNotifications(getAuth(91).sub);
+
+      expect(notifications.length).toEqual(1);
+    });
+
+    it('notifies a member of the board team', async () => {
+      const caller = await getUserCaller(90);
+      const team = await db.team.createTeam('mention team', getAuth(90).sub);
+
+      await addTeamMember(getAuth(93).sub, team.id, 'member');
+
+      const board = await caller.board.create({
+        name: 'team mentions',
+        teamId: team.id,
+      });
+
+      const result = await caller.board.mentionBoardUser({
+        boardId: board.id,
+        userId: getAuth(93).sub,
+      });
+
+      expect(result.success).toEqual(true);
+    });
+
+    it('rejects users that are not on the board', async () => {
+      const caller = await getUserCaller(90);
+      const board = await caller.board.create({ name: 'mentions' });
+
+      const result = await errorCall(() =>
+        caller.board.mentionBoardUser({
+          boardId: board.id,
+          userId: getAuth(92).sub,
+        }),
+      );
+
+      expect(result?.code).toEqual('BAD_REQUEST');
+
+      const notifications = await db.user.getUserNotifications(getAuth(92).sub);
+
+      expect(notifications.length).toEqual(0);
+    });
+
+    it('rejects node ids that are not uuids', async () => {
+      const caller = await getUserCaller(90);
+      const board = await caller.board.create({ name: 'mention node' });
+
+      await db.board.joinBoard(getAuth(94).sub, board.id);
+
+      const result = await errorCall(() =>
+        caller.board.mentionBoardUser({
+          boardId: board.id,
+          userId: getAuth(94).sub,
+          nodeId: '\ud800',
+        }),
+      );
+
+      expect(result?.code).toEqual('BAD_REQUEST');
+
+      const notifications = await db.user.getUserNotifications(getAuth(94).sub);
+
+      expect(notifications.length).toEqual(0);
     });
   });
 });

@@ -70,7 +70,6 @@ import { NodesActions } from '../services/nodes-actions';
 import { ConfigService } from '../../../services/config.service';
 import { FileUploadService } from '../../../services/file-upload.service';
 import { DemoIntroComponent } from '../components/demo-intro/demo-intro.component';
-import { filterNil } from 'ngxtension/filter-nil';
 import { ZoomControlComponent } from '../components/zoom-control/zoom-control.component';
 import { BoardNodesAlignComponent } from '../components/board-nodes-align/board-nodes-align.component';
 import { LiveReactionWallComponent } from '../components/live-reaction/live-reaction-wall.component';
@@ -335,7 +334,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
     this.store
       .select(appFeature.selectUserId)
-      .pipe(filterNil(), take(1))
+      .pipe(filter(Boolean), take(1))
       .subscribe((userId) => {
         this.store.dispatch(
           BoardPageActions.initBoard({
