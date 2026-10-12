@@ -1,5 +1,6 @@
 import { TRPCError, initTRPC } from '@trpc/server';
 import type { AppContext } from './app.context.js';
+import type { Principal } from './auth/principal.js';
 import db from './db/index.js';
 import { z } from 'zod';
 
@@ -12,19 +13,45 @@ export const createCallerFactory = t.createCallerFactory;
 
 const teamIdInput = z.object({ teamId: z.string().min(1) });
 
-export const protectedProcedure = t.procedure.use((opts) => {
-  const { ctx } = opts;
+export type AccountPrincipal = Principal & { isGuest: false; email: string };
 
+// Every existing denial stays UNAUTHORIZED. A guest on an account-only tier
+// gets FORBIDDEN, which the web app does not treat as a lost session.
+const requireUser = t.middleware(({ ctx, next }) => {
   if (!ctx.user) {
     throw new TRPCError({ code: 'UNAUTHORIZED' });
   }
 
-  return opts.next({
-    ctx: {
-      user: ctx.user,
-    },
-  });
+  return next({ ctx: { user: ctx.user } });
 });
+
+const requireAccount = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED' });
+  }
+
+  if (ctx.user.isGuest) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'ACCOUNT_REQUIRED' });
+  }
+
+  return next({ ctx: { user: ctx.user as AccountPrincipal } });
+});
+
+// API tokens can't mint a new token or delete the account. The local agent
+// route (development only) turns a token into a session and so bypasses this.
+export const requireSessionAuth = t.middleware(({ ctx, next }) => {
+  if (ctx.user?.via !== 'session') {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'SESSION_REQUIRED' });
+  }
+
+  return next();
+});
+
+// Accounts and guests.
+export const participantProcedure = t.procedure.use(requireUser);
+
+// Accounts only.
+export const protectedProcedure = t.procedure.use(requireAccount);
 
 // Runs before the procedure's own `.input()`, so it reads the raw input.
 export const teamProcedure = protectedProcedure.use(async (opts) => {
@@ -81,7 +108,7 @@ export const teamMemberProcedure = teamProcedure.use(async (opts) => {
   });
 });
 
-export const boardProcedure = protectedProcedure
+export const boardProcedure = participantProcedure
   .input(z.object({ boardId: z.uuid() }))
   .use(async (opts) => {
     const board = await db.board.getBoard(opts.input.boardId);
@@ -97,29 +124,51 @@ export const boardProcedure = protectedProcedure
     });
   });
 
-export const boardAdminProcedure = boardProcedure.use(async (opts) => {
-  const admins = await db.board.getBoardAdmins(opts.input.boardId);
+export const boardAdminProcedure = boardProcedure
+  .use(requireAccount)
+  .use(async (opts) => {
+    const admins = await db.board.getBoardAdmins(opts.input.boardId);
 
-  if (!admins.includes(opts.ctx.user.sub)) {
-    throw new TRPCError({ code: 'UNAUTHORIZED' });
-  }
+    if (!admins.includes(opts.ctx.user.sub)) {
+      throw new TRPCError({ code: 'UNAUTHORIZED' });
+    }
 
-  return opts.next();
-});
+    return opts.next();
+  });
 
-export const boardMemberProcedure = boardProcedure.use(async (opts) => {
-  const { boardId } = opts.input;
-  const userId = opts.ctx.user.sub;
-
+// Checks access and makes sure the user has an accounts_boards row.
+async function requireBoardMember(boardId: string, userId: string) {
   const userBoard = await db.board.ensureBoardMember(boardId, userId);
 
   if (!userBoard) {
     throw new TRPCError({ code: 'UNAUTHORIZED' });
   }
 
+  return userBoard;
+}
+
+// Guests OK.
+export const boardMemberProcedure = boardProcedure.use(async (opts) => {
   return opts.next({
     ctx: {
-      userBoard,
+      userBoard: await requireBoardMember(
+        opts.input.boardId,
+        opts.ctx.user.sub,
+      ),
     },
   });
 });
+
+// The account check comes first so no membership row is created for guests.
+export const boardAccountMemberProcedure = boardProcedure
+  .use(requireAccount)
+  .use(async (opts) => {
+    return opts.next({
+      ctx: {
+        userBoard: await requireBoardMember(
+          opts.input.boardId,
+          opts.ctx.user.sub,
+        ),
+      },
+    });
+  });

@@ -29,7 +29,8 @@ const SQUARE_SIZE = 2000;
 const MAX_EMITS = 250;
 
 const PORT = 8000;
-const AUTH = '';
+// e.g. SIMULATE_COOKIE='tapiz_session=<token>'
+const AUTH = process.env['SIMULATE_COOKIE'] ?? '';
 const BOARD_ID = '';
 const clientData: Record<
   string,

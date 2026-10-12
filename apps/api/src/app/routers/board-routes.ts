@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { BoardUser } from '@tapiz/board-commons';
 import {
+  boardAccountMemberProcedure,
   boardAdminProcedure,
   boardMemberProcedure,
   protectedProcedure,
@@ -112,12 +113,19 @@ export const boardRouter = router({
       success: true,
     };
   }),
-  duplicate: boardMemberProcedure.mutation(async (req) => {
+  duplicate: boardAccountMemberProcedure.mutation(async (req) => {
+    // a public team board is open to anyone; only team members copy into it
+    const teamId =
+      req.ctx.board.teamId &&
+      (await db.team.getUserTeam(req.ctx.board.teamId, req.ctx.user.sub))
+        ? req.ctx.board.teamId
+        : null;
+
     const newBoard = await db.board.createBoard(
       req.ctx.board.name + ' (copy)',
       req.ctx.user.sub,
       req.ctx.board.board,
-      req.ctx.board.teamId,
+      teamId,
     );
 
     return {
@@ -326,7 +334,8 @@ export const boardRouter = router({
       const mentionedUser = await db.user.getUser(req.input.userId);
       const board = await db.board.getBoardBasic(req.input.boardId);
 
-      if (mentionedUser && board) {
+      // guests have no email
+      if (mentionedUser?.email && board) {
         void sendMentionNotificationEmail(
           mentionedUser.email,
           board.id,
@@ -358,7 +367,16 @@ export const boardRouter = router({
       }),
     )
     .mutation(async (req) => {
-      if (req.input.role !== 'admin') {
+      if (req.input.role === 'admin') {
+        const target = await db.user.getUser(req.input.userId);
+
+        if (target?.isGuest) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'GUEST_CANNOT_BE_ADMIN',
+          });
+        }
+      } else {
         const boardAdmins = await getBoardAdmins(req.input.boardId);
 
         const admins = boardAdmins.filter(

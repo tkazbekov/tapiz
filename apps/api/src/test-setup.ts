@@ -1,5 +1,4 @@
 import { vi } from 'vitest';
-import { getAuth } from './tests/test-helpers.js';
 
 // Hoisted above the imports: app modules read these on import (file-upload
 // creates the uploads folder).
@@ -12,26 +11,39 @@ await vi.hoisted(async () => {
   process.env['API_URL'] ||= 'http://localhost:8000/api';
 });
 
-vi.mock('./app/auth', async () => {
+// Session cookies `<n>` and `g<n>` stand for test user n and test guest n.
+// Real tokens go through the real implementation.
+vi.mock('./app/auth/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./app/auth/session')>();
+
   return {
-    validateSession: (id: string) => {
-      const auth = getAuth(Number(id));
-      return Promise.resolve({
-        user: {
-          id: auth.sub,
-          email: auth.email,
-          googleId: auth.googleId,
-          name: auth.name,
-        },
-        session: 'test',
-      });
-    },
-    lucia: {
-      sessionCookieName: 'auth',
-      invalidateUserSessions: vi.fn(),
-    },
-    setPsqlClient: () => {
-      return;
+    ...actual,
+    validateSessionToken: async (
+      token?: string,
+      options?: { slide?: boolean },
+    ) => {
+      const match = token ? /^(g?)(\d+)$/.exec(token) : null;
+
+      if (!match) {
+        return actual.validateSessionToken(token, options);
+      }
+
+      const helpers = await import('./tests/test-helpers.js');
+      const auth = (match[1] ? helpers.getGuestAuth : helpers.getAuth)(
+        Number(match[2]),
+      );
+      const account = await (
+        await import('./app/db/user-db.js')
+      ).getUser(auth.sub);
+
+      return account
+        ? {
+            account,
+            sessionId: `test-${token}`,
+            expiresAt: new Date(Date.now() + 1e9),
+            refreshed: false,
+          }
+        : null;
     },
   };
 });

@@ -75,3 +75,17 @@ export function sendInvitationEmail(
 
   return sendMail(to, subject, text);
 }
+
+export function sendPasswordResetEmail(to: string, link: string) {
+  const subject = 'Tapiz - Reset your password';
+  const text = `Someone asked to reset the password of your Tapiz account. <a href="${escapeHtml(link)}">Choose a new password</a>. The link expires in one hour. If it wasn't you, ignore this email.`;
+
+  return sendMail(to, subject, text);
+}
+
+export function sendVerificationEmail(to: string, link: string) {
+  const subject = 'Tapiz - Verify your email';
+  const text = `<a href="${escapeHtml(link)}">Verify your email</a> to receive team invitations on Tapiz. The link expires in 24 hours. If you didn't create an account, ignore this email.`;
+
+  return sendMail(to, subject, text);
+}

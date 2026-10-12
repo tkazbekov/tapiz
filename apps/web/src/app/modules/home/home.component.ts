@@ -26,6 +26,7 @@ import { UserNotificationsComponent } from './components/user-notifications/user
 import { TeamMenuComponent } from './components/team-menu/team-menu.component';
 import { SpaceMenuComponent } from './components/space-menu/space-menu.component';
 import { injectQueryParams } from 'ngxtension/inject-query-params';
+import { VerifyEmailBannerComponent } from '../auth/components/verify-email-banner/verify-email-banner.component';
 
 @Component({
   selector: 'tapiz-home',
@@ -43,6 +44,7 @@ import { injectQueryParams } from 'ngxtension/inject-query-params';
     UserNotificationsComponent,
     TeamMenuComponent,
     SpaceMenuComponent,
+    VerifyEmailBannerComponent,
   ],
   template: `<div class="header">
       <a
@@ -162,6 +164,7 @@ import { injectQueryParams } from 'ngxtension/inject-query-params';
         </div>
       </nav>
       <div class="content">
+        <tapiz-verify-email-banner />
         <router-outlet></router-outlet>
       </div>
     </div>`,

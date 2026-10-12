@@ -1,11 +1,24 @@
-import { lucia } from '../app/auth';
 import { API_TOKEN_PREFIX, hashApiToken } from '../app/api-token';
-import { createAuthContext } from '../app/app.context';
+import { resolvePrincipal } from '../app/auth/principal';
+import { createSession, validateSessionToken } from '../app/auth/session';
 import db from '../app/db';
 import { startDB } from '../app/db/init-db';
-import { createMultipleUsers, getAuth, getUserCaller } from './test-helpers';
+import {
+  createGuest,
+  createMultipleUsers,
+  getAuth,
+  getGuestAuth,
+  getUserCaller,
+} from './test-helpers';
 import { vi } from 'vitest';
 import { addTeamMember } from '../app/db/user-db';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+
+const principalFor = (headers: Record<string, string>, cookies = {}) =>
+  resolvePrincipal(
+    { headers, cookies } as unknown as FastifyRequest,
+    { setCookie: vi.fn() } as unknown as FastifyReply,
+  );
 
 describe('user', () => {
   beforeAll(async () => {
@@ -13,15 +26,18 @@ describe('user', () => {
     await createMultipleUsers();
   });
 
-  it('delete account should delete user', async () => {
+  it('delete account should delete user and sessions', async () => {
     const caller = await getUserCaller(5);
+    const session = await createSession(getAuth(5).sub, false);
+
+    expect(await validateSessionToken(session.token)).toBeTruthy();
 
     await caller.user.removeAccount();
 
     const user = await db.user.getUser(getAuth(5).sub);
 
     expect(user).toBeFalsy();
-    expect(lucia.invalidateUserSessions).toBeCalled();
+    expect(await validateSessionToken(session.token)).toBeNull();
   });
 
   it('delete account should delete empty team/board', async () => {
@@ -66,46 +82,33 @@ describe('user', () => {
     expect(storedUser?.id).toEqual(getAuth(9).sub);
     expect(storedUser?.apiTokenHash).not.toEqual(firstToken.token);
 
-    const firstContext = await createAuthContext({
-      req: {
-        cookies: {},
-        headers: {
-          authorization: `Bearer ${firstToken.token}`,
-        },
-      },
-      res: {
-        setCookie: vi.fn(),
-      },
-    } as unknown as Parameters<typeof createAuthContext>[0]);
+    const firstPrincipal = await principalFor({
+      authorization: `Bearer ${firstToken.token}`,
+    });
 
-    expect(firstContext.user?.sub).toEqual(getAuth(9).sub);
+    expect(firstPrincipal?.sub).toEqual(getAuth(9).sub);
+    expect(firstPrincipal?.via).toEqual('api_token');
 
     const secondToken = await caller.user.generateApiToken();
-    const oldTokenContext = await createAuthContext({
-      req: {
-        cookies: {},
-        headers: {
-          authorization: `Bearer ${firstToken.token}`,
-        },
-      },
-      res: {
-        setCookie: vi.fn(),
-      },
-    } as unknown as Parameters<typeof createAuthContext>[0]);
-    const newTokenContext = await createAuthContext({
-      req: {
-        cookies: {},
-        headers: {
-          authorization: `Bearer ${secondToken.token}`,
-        },
-      },
-      res: {
-        setCookie: vi.fn(),
-      },
-    } as unknown as Parameters<typeof createAuthContext>[0]);
+    const oldTokenPrincipal = await principalFor({
+      authorization: `Bearer ${firstToken.token}`,
+    });
+    const newTokenPrincipal = await principalFor({
+      authorization: `Bearer ${secondToken.token}`,
+    });
 
-    expect(oldTokenContext.user).toBeNull();
-    expect(newTokenContext.user?.sub).toEqual(getAuth(9).sub);
+    expect(oldTokenPrincipal).toBeNull();
+    expect(newTokenPrincipal?.sub).toEqual(getAuth(9).sub);
+  });
+
+  it('a bearer header ignores the session cookie', async () => {
+    const session = await createSession(getAuth(10).sub, false);
+    const cookies = { tapiz_session: session.token };
+
+    expect((await principalFor({}, cookies))?.sub).toEqual(getAuth(10).sub);
+    expect(
+      await principalFor({ authorization: 'Bearer nope' }, cookies),
+    ).toBeNull();
   });
 
   it('delete account should transfer ownership', async () => {
@@ -220,6 +223,19 @@ describe('user', () => {
       expect.objectContaining({ id: member, role: 'admin' }),
     ]);
     expect(await db.board.getBoard(sharedTeamBoard.id)).toBeTruthy();
+  });
+
+  it('delete account never hands a board to a guest', async () => {
+    const caller = await getUserCaller(23);
+    const board = await caller.board.create({ name: 'guest only' });
+
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+    await createGuest(0);
+    await db.board.ensureBoardMember(board.id, getGuestAuth(0).sub);
+
+    await caller.user.removeAccount();
+
+    expect(await db.board.getBoard(board.id)).toBeFalsy();
   });
 
   describe('invites', () => {

@@ -1,4 +1,5 @@
-import { eq, and, or, desc, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { eq, and, or, desc, sql, gt, SQL } from 'drizzle-orm';
 import { db } from './init-db.js';
 import * as schema from '../schema.js';
 import {
@@ -17,15 +18,6 @@ export async function getUser(id: string) {
   return users.at(0);
 }
 
-export async function getUserByGoogleId(id: string) {
-  const users = await db
-    .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.googleId, id));
-
-  return users.at(0);
-}
-
 export async function getUserByName(name: string) {
   const users = await db
     .select()
@@ -35,11 +27,45 @@ export async function getUserByName(name: string) {
   return users[0];
 }
 
+// Emails are stored trimmed and lower-cased.
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+export class EmailTakenError extends Error {
+  constructor() {
+    super('Email already in use');
+  }
+}
+
+function isEmailTaken(e: unknown) {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    'code' in e &&
+    e.code === '23505' &&
+    'constraint_name' in e &&
+    e.constraint_name === 'accounts_email_unique'
+  );
+}
+
+async function mapEmailTaken<T>(query: Promise<T>) {
+  try {
+    return await query;
+  } catch (e) {
+    if (isEmailTaken(e)) {
+      throw new EmailTakenError();
+    }
+
+    throw e;
+  }
+}
+
 export async function getUserByEmail(email: string) {
   const users = await db
     .select()
     .from(schema.accounts)
-    .where(eq(schema.accounts.email, email));
+    .where(eq(schema.accounts.email, normalizeEmail(email)));
 
   return users.at(0);
 }
@@ -48,9 +74,188 @@ export async function getUserByApiTokenHash(apiTokenHash: string) {
   const users = await db
     .select()
     .from(schema.accounts)
-    .where(eq(schema.accounts.apiTokenHash, apiTokenHash));
+    .where(
+      and(
+        eq(schema.accounts.apiTokenHash, apiTokenHash),
+        eq(schema.accounts.isGuest, false),
+      ),
+    );
 
   return users.at(0);
+}
+
+export async function createAccount({
+  id = randomUUID(),
+  name,
+  email,
+  passwordHash,
+}: {
+  id?: string;
+  name: string;
+  email: string;
+  passwordHash: string | null;
+}) {
+  const users = await mapEmailTaken(
+    db
+      .insert(schema.accounts)
+      .values({ id, name, email: normalizeEmail(email), passwordHash })
+      .returning(),
+  );
+
+  return users[0];
+}
+
+export async function createGuest({
+  id = randomUUID(),
+  name,
+}: {
+  id?: string;
+  name: string;
+}) {
+  const users = await db
+    .insert(schema.accounts)
+    .values({ id, name, isGuest: true })
+    .returning();
+
+  return users[0];
+}
+
+// Same id, so board memberships, notes and notifications carry over. Returns
+// undefined if the account is no longer a guest (a concurrent upgrade).
+export async function upgradeGuest(
+  id: string,
+  {
+    name,
+    email,
+    passwordHash,
+  }: { name: string; email: string; passwordHash: string },
+) {
+  const users = await mapEmailTaken(
+    db
+      .update(schema.accounts)
+      .set({
+        isGuest: false,
+        name,
+        email: normalizeEmail(email),
+        passwordHash,
+      })
+      .where(and(eq(schema.accounts.id, id), eq(schema.accounts.isGuest, true)))
+      .returning(),
+  );
+
+  return users.at(0);
+}
+
+// Credentials changed: pending reset links and the API token stop working.
+const credentialReset = {
+  passwordResetHash: null,
+  passwordResetExpiresAt: null,
+  apiTokenHash: null,
+  apiTokenCreatedAt: null,
+};
+
+export async function setPassword(id: string, passwordHash: string) {
+  await db
+    .update(schema.accounts)
+    .set({ passwordHash, ...credentialReset })
+    .where(eq(schema.accounts.id, id));
+}
+
+// Same password, stronger parameters. Only replaces the hash it was derived
+// from, so a password change or reset made meanwhile is never undone.
+export async function updatePasswordHash(
+  id: string,
+  oldHash: string,
+  newHash: string,
+) {
+  await db
+    .update(schema.accounts)
+    .set({ passwordHash: newHash })
+    .where(
+      and(
+        eq(schema.accounts.id, id),
+        eq(schema.accounts.passwordHash, oldHash),
+      ),
+    );
+}
+
+function expiresIn(ttlMs: number): SQL {
+  return sql`now() + ${ttlMs} * interval '1 millisecond'`;
+}
+
+export async function setPasswordReset(
+  id: string,
+  resetHash: string,
+  ttlMs: number,
+) {
+  await db
+    .update(schema.accounts)
+    .set({
+      passwordResetHash: resetHash,
+      passwordResetExpiresAt: expiresIn(ttlMs),
+    })
+    .where(eq(schema.accounts.id, id));
+}
+
+// Single use: the matching row is updated and the hash cleared atomically.
+// Completing a reset proves the mailbox, so it also verifies the email.
+export async function consumePasswordReset(
+  resetHash: string,
+  passwordHash: string,
+) {
+  const users = await db
+    .update(schema.accounts)
+    .set({
+      passwordHash,
+      ...credentialReset,
+      emailVerifiedAt: sql`now()`,
+      emailVerifyHash: null,
+      emailVerifyExpiresAt: null,
+    })
+    .where(
+      and(
+        eq(schema.accounts.passwordResetHash, resetHash),
+        gt(schema.accounts.passwordResetExpiresAt, sql`now()`),
+        eq(schema.accounts.isGuest, false),
+      ),
+    )
+    .returning({ id: schema.accounts.id });
+
+  return users.at(0)?.id ?? null;
+}
+
+export async function setEmailVerification(
+  id: string,
+  verifyHash: string,
+  ttlMs: number,
+) {
+  await db
+    .update(schema.accounts)
+    .set({
+      emailVerifyHash: verifyHash,
+      emailVerifyExpiresAt: expiresIn(ttlMs),
+    })
+    .where(eq(schema.accounts.id, id));
+}
+
+export async function consumeEmailVerification(verifyHash: string) {
+  const users = await db
+    .update(schema.accounts)
+    .set({
+      emailVerifiedAt: sql`now()`,
+      emailVerifyHash: null,
+      emailVerifyExpiresAt: null,
+    })
+    .where(
+      and(
+        eq(schema.accounts.emailVerifyHash, verifyHash),
+        gt(schema.accounts.emailVerifyExpiresAt, sql`now()`),
+        eq(schema.accounts.isGuest, false),
+      ),
+    )
+    .returning({ id: schema.accounts.id });
+
+  return users.at(0)?.id ?? null;
 }
 
 export async function deleteAccount(userId: string): Promise<unknown> {
@@ -106,38 +311,6 @@ export async function updateUserApiToken(userId: string, apiTokenHash: string) {
   return users.at(0)?.apiTokenCreatedAt;
 }
 
-export async function createUser(
-  userId: string,
-  name: string,
-  email: string,
-  picture: string,
-  googleId: string,
-) {
-  const insertedUser = await db
-    .insert(schema.accounts)
-    .values({ id: userId, name, email, picture, googleId })
-    .onConflictDoUpdate({
-      target: schema.accounts.id,
-      set: {
-        name,
-      },
-    });
-
-  return insertedUser;
-}
-
-export async function updateUser(
-  userId: string,
-  name: string,
-  email: string,
-  picture: string,
-) {
-  return db
-    .update(schema.accounts)
-    .set({ name, picture, email })
-    .where(eq(schema.accounts.id, userId));
-}
-
 export async function invite(
   userId: string,
   inviterId: string,
@@ -176,7 +349,7 @@ export async function inviteByEmail(
   const invitation = await db
     .insert(schema.invitations)
     .values({
-      email,
+      email: normalizeEmail(email),
       inviterId,
       ...content,
       role,
@@ -214,9 +387,11 @@ export function addBoardMember(
   });
 }
 
+// `email` only for verified addresses; otherwise only invitations sent to the
+// account itself can be accepted.
 export async function acceptInvitation(
   userId: string,
-  email: string,
+  email: string | null,
   invitationId: string,
 ) {
   const invitations = await db
@@ -227,7 +402,9 @@ export async function acceptInvitation(
         eq(schema.invitations.id, invitationId),
         or(
           eq(schema.invitations.userId, userId),
-          eq(schema.invitations.email, email),
+          email
+            ? eq(schema.invitations.email, normalizeEmail(email))
+            : undefined,
         ),
       ),
     );
@@ -276,7 +453,7 @@ export async function getUserInvitationsByEmail(
     .select()
     .from(schema.invitations)
     .leftJoin(schema.teams, eq(schema.invitations.teamId, schema.teams.id))
-    .where(eq(schema.invitations.email, email));
+    .where(eq(schema.invitations.email, normalizeEmail(email)));
 
   return invitations.map((invitation) => {
     return {

@@ -1,19 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import Fastify, { FastifyInstance } from 'fastify';
-import fastifyCookie from '@fastify/cookie';
+import { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { startDB } from '../app/db/init-db';
-import { fileUpload } from '../app/file-upload';
-import { createMultipleUsers, getUserCaller } from './test-helpers';
+import {
+  buildAuthTestApp,
+  createGuest,
+  createMultipleUsers,
+  getUserCaller,
+} from './test-helpers';
 
 const uploadsDir = process.env['UPLOADS_DIR'] ?? '';
 
 function multipart(
   fields: Record<string, string>,
   file?: Buffer,
-  cookie = 'auth=1',
+  cookie = 'tapiz_session=1',
 ) {
   const boundary = '----tapiz-test';
   const parts = Object.entries(fields).map(
@@ -38,6 +41,7 @@ function multipart(
     payload: Buffer.concat(chunks),
     headers: {
       'content-type': `multipart/form-data; boundary=${boundary}`,
+      origin: process.env['FRONTEND_URL'],
       cookie,
     },
   };
@@ -52,10 +56,9 @@ describe('file upload', () => {
     await startDB();
     await createMultipleUsers();
 
-    app = Fastify();
-    await app.register(fastifyCookie, { hook: 'onRequest' });
-    await app.register(fileUpload);
-    await app.ready();
+    await createGuest(0);
+
+    app = await buildAuthTestApp();
 
     boardId = (await (await getUserCaller(1)).board.create({ name: 'files' }))
       .id;
@@ -94,7 +97,7 @@ describe('file upload', () => {
       const response = await app.inject({
         method: 'GET',
         url: `/api/uploads/${name}`,
-        headers: { cookie: 'auth=1' },
+        headers: { cookie: 'tapiz_session=1' },
       });
 
       expect(response.statusCode).toEqual(404);
@@ -121,7 +124,10 @@ describe('file upload', () => {
     const json = await app.inject({
       method: 'POST',
       url: '/api/upload-file-board',
-      headers: { cookie: 'auth=1' },
+      headers: {
+        cookie: 'tapiz_session=1',
+        origin: process.env['FRONTEND_URL'],
+      },
       payload: {},
     });
 
@@ -132,7 +138,7 @@ describe('file upload', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/upload-file-board',
-      ...multipart({ boardId }, image, 'auth=2'),
+      ...multipart({ boardId }, image, 'tapiz_session=2'),
     });
 
     expect(response.statusCode).toEqual(401);
@@ -154,7 +160,7 @@ describe('file upload', () => {
     const download = await app.inject({
       method: 'GET',
       url: `/api/uploads/${url}`,
-      headers: { cookie: 'auth=1' },
+      headers: { cookie: 'tapiz_session=1' },
     });
 
     expect(download.statusCode).toEqual(200);
@@ -163,9 +169,42 @@ describe('file upload', () => {
     const outsider = await app.inject({
       method: 'GET',
       url: `/api/uploads/${url}`,
-      headers: { cookie: 'auth=2' },
+      headers: { cookie: 'tapiz_session=2' },
     });
 
     expect(outsider.statusCode).toEqual(404);
+  });
+
+  it('lets guests view images on public boards but not upload', async () => {
+    const owner = await getUserCaller(1);
+    const publicBoard = await owner.board.create({ name: 'public files' });
+    await owner.board.changePrivacy({
+      boardId: publicBoard.id,
+      isPublic: true,
+    });
+
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/upload-file-board',
+      ...multipart({ boardId: publicBoard.id }, image),
+    });
+    const { url } = upload.json<{ url: string }>();
+
+    const guestUpload = await app.inject({
+      method: 'POST',
+      url: '/api/upload-file-board',
+      ...multipart({ boardId: publicBoard.id }, image, 'tapiz_session=g0'),
+    });
+
+    expect(guestUpload.statusCode).toEqual(403);
+    expect(guestUpload.json()).toEqual({ error: 'ACCOUNT_REQUIRED' });
+
+    const guestDownload = await app.inject({
+      method: 'GET',
+      url: `/api/uploads/${url}`,
+      headers: { cookie: 'tapiz_session=g0' },
+    });
+
+    expect(guestDownload.statusCode).toEqual(200);
   });
 });

@@ -1,54 +1,69 @@
 import { Injectable, inject } from '@angular/core';
 import { Store } from '@ngrx/store';
-import { BehaviorSubject, take } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { AppActions } from '../+state/app.actions';
-import { filterNil } from 'ngxtension/filter-nil';
-import { appFeature } from '../+state/app.reducer';
 import { AuthUserModel, withDefaultUserSettings } from '@tapiz/board-commons';
+import { AuthApiService } from './auth-api.service';
+import { ConfigService } from './config.service';
 
 @Injectable({
   providedIn: 'root',
 })
 export class AuthService {
-  private store = inject(Store);
-  private authReady$ = new BehaviorSubject<boolean>(false);
+  #store = inject(Store);
+  #authApiService = inject(AuthApiService);
+  #configService = inject(ConfigService);
 
-  configureLogin() {
-    const user = localStorage.getItem('user');
+  // runs as an app initializer, so guards can read the user synchronously
+  async bootstrap() {
+    // the user used to be cached here, the session cookie is the source now
+    try {
+      localStorage.removeItem('user');
+    } catch {
+      // storage can be blocked
+    }
 
-    if (user) {
-      const parsedUser = JSON.parse(user) as AuthUserModel;
-      const normalizedUser = {
-        ...parsedUser,
-        settings: withDefaultUserSettings(parsedUser.settings),
-      };
+    if (this.#configService.config.DEMO) {
+      return;
+    }
 
-      this.store.dispatch(AppActions.setUser({ user: normalizedUser }));
-
-      this.store
-        .select(appFeature.selectUser)
-        .pipe(filterNil(), take(1))
-        .subscribe(() => {
-          this.authReady$.next(true);
-        });
-    } else {
-      this.authReady$.next(true);
+    try {
+      await this.refresh();
+    } catch {
+      this.setUser(null);
     }
   }
 
-  get authReady() {
-    return this.authReady$.asObservable();
+  async refresh(): Promise<AuthUserModel | null> {
+    const { user } = await firstValueFrom(this.#authApiService.session());
+
+    this.setUser(user);
+
+    return user;
+  }
+
+  setUser(user: AuthUserModel | null) {
+    this.#store.dispatch(
+      AppActions.setUser({
+        user: user
+          ? { ...user, settings: withDefaultUserSettings(user.settings) }
+          : null,
+      }),
+    );
+  }
+
+  async resendVerification() {
+    const response = await firstValueFrom(
+      this.#authApiService.resendVerification(),
+    );
+
+    // 204: verified meanwhile (e.g. in another tab), nothing was sent
+    if (response.status === 204) {
+      await this.refresh();
+    }
   }
 
   logout() {
-    this.store.dispatch(AppActions.logout());
-  }
-
-  setLocalStoreUser(user: AuthUserModel) {
-    localStorage.setItem('user', JSON.stringify(user));
-  }
-
-  removeLocalStoreUser() {
-    localStorage.removeItem('user');
+    this.#store.dispatch(AppActions.logout());
   }
 }

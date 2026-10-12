@@ -20,7 +20,7 @@ import { authenticateApiToken } from './authenticate-api-token.js';
 type McpUser = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
 };
 type CocomaterialNodeInput = {
   url: string;
@@ -234,7 +234,12 @@ export async function runAsMcpBoardClient<T>(
   callback: (client: Client) => Promise<T>,
 ) {
   const socket = new McpSocket(server) as unknown as Socket;
-  const client = new Client(socket, server, user.name, user.id, user.email);
+  const client = new Client(socket, server, {
+    id: user.id,
+    name: user.name,
+    isGuest: false,
+    sessionId: null,
+  });
 
   server.clients.push(client);
 

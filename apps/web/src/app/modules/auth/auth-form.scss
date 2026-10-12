@@ -1,0 +1,37 @@
+// Shared by the auth pages, rendered inside tapiz-auth-layout
+form,
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  max-inline-size: 400px;
+}
+
+p {
+  color: var(--grey-60);
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.error {
+  color: var(--error);
+}
+
+.notice {
+  background: var(--grey-10);
+  border: 1px solid var(--grey-30);
+  border-radius: 8px;
+  padding: var(--spacing-3);
+}
+
+button[type="submit"] {
+  align-self: flex-start;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-4);
+  font-size: var(--font-size-14);
+  margin-block-start: var(--spacing-2);
+}

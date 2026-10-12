@@ -5,8 +5,6 @@ const Config = {
   DB_PASSWORD: process.env['POSTGRES_PASSWORD'],
   DB_PORT_HOST: Number(process.env['POSTGRES_PORT_HOST']),
   DB_USER: process.env['POSTGRES_USER'],
-  GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
-  GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
   FRONTEND_URL: process.env['FRONTEND_URL'] ?? 'http://localhost:4300',
 };
 import { migrate } from 'drizzle-orm/postgres-js/migrator';

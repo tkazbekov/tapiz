@@ -1,41 +1,43 @@
-import { inject } from '@angular/core';
+import { DOCUMENT, inject } from '@angular/core';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
-import { concatLatestFrom } from '@ngrx/operators';
 import { UserApiService } from '../services/user-api.service';
 import { AppActions } from './app.actions';
-import { EMPTY, catchError, exhaustMap, filter, map, mergeMap, of } from 'rxjs';
+import {
+  EMPTY,
+  catchError,
+  exhaustMap,
+  filter,
+  from,
+  map,
+  of,
+  tap,
+} from 'rxjs';
 import { Router } from '@angular/router';
-import { Store } from '@ngrx/store';
-import { appFeature } from './app.reducer';
 import { AuthService } from '../services/auth.service';
+import { AuthApiService } from '../services/auth-api.service';
 import { HomeActions } from '../modules/home/+state/home.actions';
 
 export const logout$ = createEffect(
   (
     actions$ = inject(Actions),
-    userApiService = inject(UserApiService),
-    authService = inject(AuthService),
-    router = inject(Router),
+    authApiService = inject(AuthApiService),
+    document = inject(DOCUMENT),
   ) => {
     return actions$.pipe(
       ofType(AppActions.logout),
       exhaustMap(() => {
-        // clear the local session even if the server call fails
-        return userApiService.logout().pipe(catchError(() => of(null)));
+        // leave even if the server call fails
+        return authApiService.logout().pipe(catchError(() => of(null)));
       }),
-      map(() => {
-        document.cookie = '';
-        localStorage.removeItem('user');
-        authService.removeLocalStoreUser();
-
-        router.navigate(['/login']);
-
-        return AppActions.setUser({ user: null });
+      tap(() => {
+        // full reload drops every piece of in-memory state of the old user
+        document.location.assign('/login');
       }),
     );
   },
   {
     functional: true,
+    dispatch: false,
   },
 );
 
@@ -43,30 +45,32 @@ export const unauthorized$ = createEffect(
   (
     actions$ = inject(Actions),
     router = inject(Router),
-    store = inject(Store),
+    authService = inject(AuthService),
   ) => {
     return actions$.pipe(
       ofType(AppActions.unauthorized),
-      concatLatestFrom(() => store.select(appFeature.selectUserId)),
-      mergeMap(([, userId]) => {
-        if (userId) {
-          if (router.url.includes('/board')) {
-            router.navigate(['/404']);
-          } else if (router.url === '/') {
-            router.navigate(['/login']);
-          } else {
-            router.navigate(['/']);
-          }
+      exhaustMap(() => {
+        // the session may have ended or only this resource may be forbidden
+        return from(authService.refresh()).pipe(catchError(() => EMPTY));
+      }),
+      tap((user) => {
+        const onBoard = router.url.startsWith('/board');
 
-          return EMPTY;
+        if (!user) {
+          void router.navigate(['/login'], {
+            queryParams: { returnUrl: router.url },
+          });
+        } else if (onBoard) {
+          void router.navigate(['/404']);
+        } else {
+          void router.navigate(['/']);
         }
-
-        return of(AppActions.logout());
       }),
     );
   },
   {
     functional: true,
+    dispatch: false,
   },
 );
 

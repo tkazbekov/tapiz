@@ -20,7 +20,6 @@ import {
 import { finalize } from 'rxjs';
 import { AppActions } from '../../../../+state/app.actions';
 import { appFeature } from '../../../../+state/app.reducer';
-import { AuthService } from '../../../../services/auth.service';
 import { ConfigService } from '../../../../services/config.service';
 import { UserApiService } from '../../../../services/user-api.service';
 import { BoardPageActions } from '../../actions/board-page.actions';
@@ -43,7 +42,6 @@ interface WheelInputOption {
 export class UserMenuComponent {
   #store = inject(Store);
   #userApiService = inject(UserApiService);
-  #authService = inject(AuthService);
   #configService = inject(ConfigService);
   #wheelInput = inject(BoardWheelInputService);
   #snackBar = inject(MatSnackBar);
@@ -137,6 +135,5 @@ export class UserMenuComponent {
 
   #setCurrentUser(user: AuthUserModel) {
     this.#store.dispatch(AppActions.setUser({ user }));
-    this.#authService.setLocalStoreUser(user);
   }
 }

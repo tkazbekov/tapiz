@@ -9,6 +9,8 @@ export interface User {
   cursor: Point | null;
   position?: Point;
   zoom?: number;
+  // set by the server only
+  isGuest?: boolean;
 }
 
 export interface BoardUserInfo {

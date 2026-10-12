@@ -78,6 +78,13 @@
       "when": 1783709158294,
       "tag": "0010_bored_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1791936000000,
+      "tag": "0011_own_auth",
+      "breakpoints": true
     }
   ]
 }

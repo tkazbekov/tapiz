@@ -79,4 +79,7 @@ export interface AuthUserModel {
   picture: string;
   id: string;
   settings: UserSettings;
+  isGuest: boolean;
+  email: string | null;
+  emailVerified: boolean;
 }

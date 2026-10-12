@@ -15,6 +15,9 @@ function userWithWheelMode(wheelInputMode: WheelInputMode): AuthUserModel {
     id: 'user-1',
     name: 'Ada',
     picture: '',
+    isGuest: false,
+    email: 'ada@example.com',
+    emailVerified: true,
     settings: {
       ...defaultUserSettings,
       wheelInputMode,

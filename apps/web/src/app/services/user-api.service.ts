@@ -55,8 +55,4 @@ export class UserApiService {
   clearNotifications() {
     return from(this.trpc.user.clearNotifications.mutate());
   }
-
-  logout() {
-    return from(this.trpc.user.logout.query());
-  }
 }

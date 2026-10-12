@@ -1,0 +1,44 @@
+:host {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-block: 15vh var(--spacing-8);
+  padding-inline: var(--spacing-4);
+  background-image: url("/assets/dot-bg.png");
+  background-size: 40px;
+}
+
+.card {
+  position: relative;
+  inline-size: 100%;
+  max-inline-size: 715px;
+  padding: var(--spacing-8);
+  background: var(--white);
+  border-radius: var(--radius-4);
+  border: 2px solid var(--grey-30);
+
+  @media (max-width: 800px) {
+    padding: var(--spacing-6);
+  }
+}
+
+.logo {
+  display: flex;
+  margin-block-end: var(--spacing-4);
+}
+
+.login-img {
+  position: absolute;
+  top: 40px;
+  right: -120px;
+
+  @media (max-width: 1100px) {
+    display: none;
+  }
+}
+
+h1 {
+  font-size: var(--font-size-24);
+  margin: 0 0 var(--spacing-6);
+}

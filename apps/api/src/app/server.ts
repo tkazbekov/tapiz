@@ -1,4 +1,5 @@
 import {
+  BoardCommonActions,
   isUserNode,
   type BoardSettings,
   type StateActions,
@@ -6,12 +7,13 @@ import {
   type UserNode,
 } from '@tapiz/board-commons';
 import type { Socket, Server as WsServer } from 'socket.io';
-import { Client } from './client.js';
+import { Client, type ClientIdentity } from './client.js';
 import db from './db/index.js';
 
 import { syncNodeBox } from '@tapiz/sync-node-box';
 import { Subscription, throttleTime } from 'rxjs';
-import { lucia, validateSession } from './auth.js';
+import { getAuthConfig } from './auth/config.js';
+import { validateSessionToken } from './auth/session.js';
 
 export class Server {
   public clients: Client[] = [];
@@ -23,38 +25,135 @@ export class Server {
 
   constructor(public io: WsServer) {}
 
+  // Sockets authenticate once, on connect, and never slide the session: they
+  // can't update the cookie.
   public async connection(socket: Socket, cookies: Record<string, string>) {
-    const sessionId = cookies[lucia.sessionCookieName];
-    if (sessionId) {
-      const { session, user } = await validateSession(sessionId);
+    const token = cookies[getAuthConfig().cookieName];
+    const session = await validateSessionToken(token, { slide: false });
 
-      if (session && user) {
-        const dbUser = await db.user.getUser(user.id);
-
-        // the socket may have gone away while the session was validated
-        if (dbUser && socket.connected) {
-          const client = new Client(
-            socket,
-            this,
-            dbUser.name,
-            dbUser.id,
-            dbUser.email,
-          );
-
-          this.clients.push(client);
-          // per-user room so user events reach every tab
-          socket.join(`user:${dbUser.id}`);
-
-          socket.on('disconnect', () => {
-            this.clientClose(client);
-          });
-
-          return;
-        }
-      }
+    if (!session) {
+      socket.emit('auth_error', 'unauthenticated');
+      socket.disconnect(true);
+      return;
     }
 
-    socket.disconnect();
+    // the socket may have gone away while the session was validated
+    if (!socket.connected) {
+      return;
+    }
+
+    const client = new Client(socket, this, {
+      id: session.account.id,
+      name: session.account.name,
+      isGuest: session.account.isGuest,
+      sessionId: session.sessionId,
+    });
+
+    this.clients.push(client);
+    // per-user room so user events reach every tab
+    socket.join(`user:${session.account.id}`);
+
+    socket.on('disconnect', () => {
+      this.clientClose(client);
+    });
+
+    // a logout while the session was validated could not see this client yet
+    if (!(await validateSessionToken(token, { slide: false }))) {
+      this.disconnectClients([client], 'session_ended');
+    }
+  }
+
+  private disconnectClients(clients: Client[], reason: string) {
+    clients.forEach((client) => {
+      client.socket.emit('auth_error', reason);
+      client.close();
+      client.socket.disconnect(true);
+      this.clientClose(client);
+    });
+  }
+
+  public disconnectSessions(sessionIds: string[], reason: string) {
+    if (!sessionIds.length) {
+      return;
+    }
+
+    this.disconnectClients(
+      this.clients.filter(
+        (client) => !!client.sessionId && sessionIds.includes(client.sessionId),
+      ),
+      reason,
+    );
+  }
+
+  public disconnectAccount(accountId: string, reason: string) {
+    this.disconnectClients(
+      this.clients.filter((client) => client.id === accountId),
+      reason,
+    );
+  }
+
+  // Patches live clients of the account (a guest upgraded in place keeps its
+  // id and sockets) and the user node on their boards.
+  public updateIdentity(
+    accountId: string,
+    identity: Partial<Omit<ClientIdentity, 'id'>>,
+  ) {
+    const boardIds = new Set<string>();
+
+    this.clients
+      .filter((client) => client.id === accountId)
+      .forEach((client) => {
+        if (identity.name !== undefined) {
+          client.username = identity.name;
+        }
+
+        if (identity.isGuest !== undefined) {
+          client.isGuest = identity.isGuest;
+        }
+
+        if (identity.sessionId !== undefined) {
+          client.sessionId = identity.sessionId;
+        }
+
+        if (client.boardId) {
+          boardIds.add(client.boardId);
+        }
+      });
+
+    const content: Partial<UserNode['content']> = {};
+
+    if (identity.name !== undefined) {
+      content.name = identity.name;
+    }
+
+    if (identity.isGuest !== undefined) {
+      content.isGuest = identity.isGuest;
+    }
+
+    if (!Object.keys(content).length) {
+      return;
+    }
+
+    boardIds.forEach((boardId) => {
+      this.setState(boardId, (state) =>
+        state.map((node) =>
+          isUserNode(node) && node.id === accountId
+            ? { ...node, content: { ...node.content, ...content } }
+            : node,
+        ),
+      );
+
+      const action: StateActions = {
+        op: 'patch',
+        data: { type: 'user', id: accountId, content },
+      };
+
+      this.io
+        .to(boardId)
+        .emit('board', [
+          { type: BoardCommonActions.stateAction, data: [action] },
+        ]);
+    });
   }
 
   private findBoardSettings(boardId: string): BoardSettings {
@@ -194,6 +293,7 @@ export class Server {
               content: {
                 ...it.content,
                 name: user.content.name,
+                isGuest: user.content.isGuest,
                 connected: true,
               },
             };

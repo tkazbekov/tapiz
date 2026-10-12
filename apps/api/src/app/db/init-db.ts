@@ -1,7 +1,6 @@
 import { drizzle, PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { setPsqlClient } from '../auth.js';
 
 export let db: PostgresJsDatabase;
 export let psqlClient: postgres.Sql;
@@ -18,8 +17,6 @@ function initDbClient() {
   psqlClient = postgres(connection);
 
   db = drizzle(psqlClient);
-
-  setPsqlClient(psqlClient);
 
   return db;
 }

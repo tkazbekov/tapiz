@@ -12,6 +12,14 @@ import db from '../app/db/index.js';
 import { io } from 'socket.io-client';
 import { setServer } from '../app/global.js';
 import { createWsAllowRequest } from '../app/network.js';
+import type { Principal } from '../app/auth/principal.js';
+import { registerPrincipalHook } from '../app/auth/principal.js';
+import { registerCsrfHook } from '../app/auth/csrf.js';
+import { authRoutes } from '../app/routers/auth-routes.js';
+import { fileUpload } from '../app/file-upload.js';
+import { db as drizzleDb } from '../app/db/init-db.js';
+import { accounts } from '../app/schema.js';
+import { eq } from 'drizzle-orm';
 
 export async function errorCall(call: () => Promise<unknown>) {
   try {
@@ -29,24 +37,65 @@ export const usersTest = [...Array(100)].map(() => {
   return {
     id: randUuid(),
     name: randFirstName(),
-    email: randEmail(),
-    googleId: randUuid(),
+    email: randEmail().toLowerCase(),
   };
 });
 
-export const getAuth = (userIndex: number) => {
+export const guestsTest = [...Array(20)].map(() => {
+  return {
+    id: randUuid(),
+    name: randFirstName(),
+  };
+});
+
+export const getAuth = (userIndex: number): Principal & { email: string } => {
   return {
     sub: usersTest[userIndex].id,
     name: usersTest[userIndex].name,
     email: usersTest[userIndex].email,
-    googleId: usersTest[userIndex].googleId,
+    picture: null,
+    isGuest: false,
+    emailVerified: true,
+    via: 'session',
+    sessionId: null,
   };
 };
 
+export const getGuestAuth = (guestIndex: number): Principal => {
+  return {
+    sub: guestsTest[guestIndex].id,
+    name: guestsTest[guestIndex].name,
+    email: null,
+    picture: null,
+    isGuest: true,
+    emailVerified: false,
+    via: 'session',
+    sessionId: null,
+  };
+};
+
+// Test accounts own their email, as Google accounts did, so email
+// invitations reach them.
 export const createUser = async (userIndex: number) => {
   const auth = getAuth(userIndex);
 
-  await db.user.createUser(auth.sub, auth.name, auth.email, '', auth.googleId);
+  await db.user.createAccount({
+    id: auth.sub,
+    name: auth.name,
+    email: auth.email,
+    passwordHash: null,
+  });
+
+  await drizzleDb
+    .update(accounts)
+    .set({ emailVerifiedAt: new Date() })
+    .where(eq(accounts.id, auth.sub));
+};
+
+export const createGuest = async (guestIndex: number) => {
+  const auth = getGuestAuth(guestIndex);
+
+  await db.user.createGuest({ id: auth.sub, name: auth.name });
 };
 
 export const createMultipleUsers = async (size = usersTest.length) => {
@@ -55,13 +104,15 @@ export const createMultipleUsers = async (size = usersTest.length) => {
   }
 };
 
-// Test double: callers only need `user`; req/res/app are not wired and every
-// rate limit allows the call.
-export const createTestContext = (
-  user: ReturnType<typeof getAuth> | null,
-): AppContext =>
+// Test double: callers only need `user`; req/app are not wired, the reply
+// only takes cookies and every rate limit allows the call.
+export const createTestContext = (user: Principal | null): AppContext =>
   ({
     user,
+    res: {
+      setCookie: () => undefined,
+      clearCookie: () => undefined,
+    },
     rateLimits: {
       mentionBoardUser: async () => ({ isAllowed: true, isExceeded: false }),
     },
@@ -71,6 +122,31 @@ export const getUserCaller = (userIndex: number) => {
   const createCaller = createCallerFactory(appRouter);
 
   return createCaller(createTestContext(getAuth(userIndex)));
+};
+
+export const getGuestCaller = (guestIndex: number) => {
+  const createCaller = createCallerFactory(appRouter);
+
+  return createCaller(createTestContext(getGuestAuth(guestIndex)));
+};
+
+// The REST side of production wiring, for `inject`: cookies, CSRF and
+// principal hooks, the rate limiter, auth and file routes.
+export const buildAuthTestApp = async () => {
+  const app = Fastify();
+
+  await app.register(fastifyCookie, { hook: 'onRequest' });
+  registerCsrfHook(app);
+  registerPrincipalHook(app);
+  await app.register(import('@fastify/rate-limit'), {
+    max: 1000,
+    timeWindow: '1 minute',
+  });
+  await app.register(authRoutes);
+  await app.register(fileUpload);
+  await app.ready();
+
+  return app;
 };
 
 export const initTestServer = async (port: number): Promise<Server> => {
@@ -97,10 +173,15 @@ export const initTestServer = async (port: number): Promise<Server> => {
   setServer(server);
 
   io.on('connection', (socket) => {
-    server.connection(
-      socket,
-      fastify.parseCookie(socket.request.headers.cookie ?? ''),
-    );
+    void server
+      .connection(
+        socket,
+        fastify.parseCookie(socket.request.headers.cookie ?? ''),
+      )
+      .catch((e) => {
+        console.error(e);
+        socket.disconnect(true);
+      });
   });
 
   await fastify.listen({ port });
@@ -115,7 +196,10 @@ interface WsOptions {
   origin?: string;
 }
 
-const connectWs = (port: number, { cookie = 'auth=1', origin }: WsOptions) => {
+const connectWs = (
+  port: number,
+  { cookie = 'tapiz_session=1', origin }: WsOptions,
+) => {
   return io(`ws://localhost:${port}`, {
     transports: ['websocket'],
     parser: customParser,

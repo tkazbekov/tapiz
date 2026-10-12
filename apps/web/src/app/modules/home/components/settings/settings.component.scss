@@ -156,6 +156,29 @@ section {
   justify-content: flex-start;
 }
 
+.password-form {
+  margin-block-start: var(--spacing-4);
+}
+
+.password-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  max-inline-size: 400px;
+}
+
+.password-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--spacing-3);
+}
+
+.password-error {
+  color: var(--error);
+  font-size: var(--font-size-14);
+  margin: 0;
+}
+
 @media (max-width: 760px) {
   .settings-page {
     padding: var(--spacing-4);

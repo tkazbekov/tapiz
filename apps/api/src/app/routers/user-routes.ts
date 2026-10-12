@@ -1,90 +1,107 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { protectedProcedure, publicProcedure, router } from '../trpc.js';
+import {
+  participantProcedure,
+  protectedProcedure,
+  requireSessionAuth,
+  router,
+} from '../trpc.js';
 import db from '../db/index.js';
-import { getUserInvitationsByEmail } from '../db/user-db.js';
-import { lucia } from '../auth.js';
+import { getUserInvitationsByEmail, normalizeEmail } from '../db/user-db.js';
 import { userSettingsValidator } from '@tapiz/board-commons/validators/user-settings.validator.js';
 import { withDefaultUserSettings } from '@tapiz/board-commons';
 import { generateApiToken, hashApiToken } from '../api-token.js';
-import { revokeBoardAccess } from '../global.js';
+import { getServer, revokeBoardAccess } from '../global.js';
 import { deleteBoardFiles } from '../file-upload.js';
+import { clearSessionCookie } from '../auth/session.js';
+import { toAuthUser } from './auth-routes.js';
 
 export const userRouter = router({
-  removeAccount: protectedProcedure.mutation(async (req) => {
-    const userId = req.ctx.user.sub;
+  removeAccount: protectedProcedure
+    .use(requireSessionAuth)
+    .mutation(async (req) => {
+      const userId = req.ctx.user.sub;
 
-    await lucia.invalidateUserSessions(userId);
+      // Team boards cascade with their team, so teams go first.
+      for (const team of await db.team.getUserTeams(userId)) {
+        const members = await db.team.getTeamMembers(team.id);
 
-    // Team boards cascade with their team, so teams go first.
-    for (const team of await db.team.getUserTeams(userId)) {
-      const members = await db.team.getTeamMembers(team.id);
+        if (members.length === 1) {
+          const boards = await db.board.getBoardsByTeam(team.id);
 
-      if (members.length === 1) {
-        const boards = await db.board.getBoardsByTeam(team.id);
+          for (const board of boards) {
+            await deleteBoardFiles(board.id);
+          }
 
-        for (const board of boards) {
-          await deleteBoardFiles(board.id);
+          await db.team.deleteTeam(team.id);
+          boards.forEach((board) => revokeBoardAccess(board.id));
+          continue;
         }
 
-        await db.team.deleteTeam(team.id);
-        boards.forEach((board) => revokeBoardAccess(board.id));
-        continue;
+        const others = members.filter((member) => member.id !== userId);
+
+        if (!others.some((member) => member.role === 'admin')) {
+          await db.team.changeRole(team.id, others[0].id, 'admin');
+        }
       }
 
-      const others = members.filter((member) => member.id !== userId);
+      for (const board of await db.board.getAdminBoardIds(userId)) {
+        // team admins keep administering team boards
+        if (board.teamId) {
+          continue;
+        }
 
-      if (!others.some((member) => member.role === 'admin')) {
-        await db.team.changeRole(team.id, others[0].id, 'admin');
+        const members = (await db.board.getBoardUsers(board.id)).filter(
+          (member) => member.id !== userId,
+        );
+
+        if (members.some((member) => member.role === 'admin')) {
+          continue;
+        }
+
+        // guests can't administer boards
+        let newOwner: (typeof members)[number] | undefined;
+
+        for (const member of members) {
+          if ((await db.user.getUser(member.id))?.isGuest === false) {
+            newOwner = member;
+            break;
+          }
+        }
+
+        if (newOwner) {
+          await db.board.changeRole(board.id, newOwner.id, 'admin');
+        } else {
+          await db.board.deleteBoard(board.id);
+          revokeBoardAccess(board.id);
+        }
       }
-    }
 
-    for (const board of await db.board.getAdminBoardIds(userId)) {
-      // team admins keep administering team boards
-      if (board.teamId) {
-        continue;
-      }
+      // sessions cascade with the account
+      await db.user.deleteAccount(userId);
 
-      const members = (await db.board.getBoardUsers(board.id)).filter(
-        (member) => member.id !== userId,
-      );
+      getServer()?.disconnectAccount(userId, 'account_deleted');
+      clearSessionCookie(req.ctx.res);
 
-      if (members.some((member) => member.role === 'admin')) {
-        continue;
-      }
-
-      const newOwner = members.at(0);
-
-      if (newOwner) {
-        await db.board.changeRole(board.id, newOwner.id, 'admin');
-      } else {
-        await db.board.deleteBoard(board.id);
-        revokeBoardAccess(board.id);
-      }
-    }
-
-    await db.user.deleteAccount(userId);
-
-    return {
-      success: true,
-    };
-  }),
-  user: protectedProcedure.query(async (req) => {
+      return {
+        success: true,
+      };
+    }),
+  user: participantProcedure.query(async (req) => {
     const user = await db.user.getUser(req.ctx.user.sub);
 
-    return {
-      name: req.ctx.user.name,
-      id: req.ctx.user.sub,
-      picture: req.ctx.user.picture ?? '',
-      settings: withDefaultUserSettings(user?.settings),
-    };
+    if (!user) {
+      throw new TRPCError({ code: 'UNAUTHORIZED' });
+    }
+
+    return toAuthUser(user);
   }),
-  settings: protectedProcedure.query(async (req) => {
+  settings: participantProcedure.query(async (req) => {
     const user = await db.user.getUser(req.ctx.user.sub);
 
     return withDefaultUserSettings(user?.settings);
   }),
-  updateSettings: protectedProcedure
+  updateSettings: participantProcedure
     .input(userSettingsValidator)
     .mutation(async (req) => {
       const settings = withDefaultUserSettings(req.input);
@@ -100,22 +117,25 @@ export const userRouter = router({
 
     return tokenInfo ?? { hasToken: false, createdAt: null };
   }),
-  generateApiToken: protectedProcedure.mutation(async (req) => {
-    const token = generateApiToken();
-    const createdAt = await db.user.updateUserApiToken(
-      req.ctx.user.sub,
-      hashApiToken(token),
-    );
+  generateApiToken: protectedProcedure
+    .use(requireSessionAuth)
+    .mutation(async (req) => {
+      const token = generateApiToken();
+      const createdAt = await db.user.updateUserApiToken(
+        req.ctx.user.sub,
+        hashApiToken(token),
+      );
 
-    return {
-      token,
-      createdAt,
-    };
-  }),
+      return {
+        token,
+        createdAt,
+      };
+    }),
   invites: protectedProcedure.query(async (req) => {
-    const email = req.ctx.user.email;
-
-    const invitationsEmail = await getUserInvitationsByEmail(email);
+    // invitations sent to an address only reach a verified owner of it
+    const invitationsEmail = req.ctx.user.emailVerified
+      ? await getUserInvitationsByEmail(req.ctx.user.email)
+      : [];
     const invitations = await db.user.getUserInvitations(req.ctx.user.sub);
 
     return [...invitationsEmail, ...invitations];
@@ -125,7 +145,7 @@ export const userRouter = router({
     .mutation(async (req) => {
       const result = await db.user.acceptInvitation(
         req.ctx.user.sub,
-        req.ctx.user.email,
+        req.ctx.user.emailVerified ? req.ctx.user.email : null,
         req.input.inviteId,
       );
 
@@ -151,7 +171,10 @@ export const userRouter = router({
       if (
         invitation.inviterId !== req.ctx.user.sub &&
         invitation.userId !== req.ctx.user.sub &&
-        invitation.email !== req.ctx.user.email
+        !(
+          req.ctx.user.emailVerified &&
+          invitation.email === normalizeEmail(req.ctx.user.email)
+        )
       ) {
         if (invitation.teamId) {
           const admins = await db.team.getTeamAdmins(invitation.teamId);
@@ -184,16 +207,7 @@ export const userRouter = router({
         success: true,
       };
     }),
-  logout: publicProcedure.query(async (req) => {
-    if (req.ctx.user) {
-      await lucia.invalidateUserSessions(req.ctx.user.sub);
-    }
-
-    return {
-      success: true,
-    };
-  }),
-  notifications: protectedProcedure
+  notifications: participantProcedure
     .input(z.object({ offset: z.number().int().optional().default(0) }))
     .query(async (req) => {
       const notifications = await db.user.getUserNotifications(
@@ -208,7 +222,7 @@ export const userRouter = router({
         size,
       };
     }),
-  clearNotifications: protectedProcedure.mutation(async (req) => {
+  clearNotifications: participantProcedure.mutation(async (req) => {
     await db.user.clearUserNotifications(req.ctx.user.sub);
 
     return {

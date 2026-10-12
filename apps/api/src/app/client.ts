@@ -12,6 +12,14 @@ import { z } from 'zod';
 import { haveAccess } from './db/board-db.js';
 import { haveAccessTeam } from './db/team-db.js';
 
+export interface ClientIdentity {
+  id: string;
+  name: string;
+  isGuest: boolean;
+  // null for MCP clients, which authenticate with an API token
+  sessionId: string | null;
+}
+
 const subSchema = z.object({
   type: z.union([z.literal('board'), z.literal('team')]),
   id: z.string(),
@@ -27,14 +35,21 @@ export class Client {
   private privateId = '';
   // bumped by every join and leave so an older, still running join gives up
   private joinSeq = 0;
+  id: string;
+  username: string;
+  isGuest: boolean;
+  sessionId: string | null;
 
   constructor(
     public socket: Socket,
     private server: Server,
-    public username: string,
-    public id: string,
-    public email: string,
+    identity: ClientIdentity,
   ) {
+    this.id = identity.id;
+    this.username = identity.name;
+    this.isGuest = identity.isGuest;
+    this.sessionId = identity.sessionId;
+
     this.socket.on('board', this.boardIncomingMessage.bind(this));
     this.socket.on('sub', this.subscriptorMessage.bind(this));
     this.socket.on('correlationId', (correlationId: string) => {
@@ -344,6 +359,7 @@ export class Client {
         content: {
           id: this.id,
           name: this.username,
+          isGuest: this.isGuest,
           visible: false,
           connected: true,
           cursor: null,
@@ -415,7 +431,8 @@ export class Client {
 
     const admins = await db.board.getBoardAdmins(this.boardId);
 
-    this.isAdmin = admins.includes(this.id);
+    // guests are never board admins
+    this.isAdmin = !this.isGuest && admins.includes(this.id);
   }
 
   getSetStateAction(nodes: TuNode[]) {

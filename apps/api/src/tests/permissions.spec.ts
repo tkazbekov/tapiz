@@ -1,15 +1,22 @@
 import { startDB } from '../app/db/init-db';
 import {
+  createGuest,
   createMultipleUsers,
   createTestContext,
   errorCall,
   getAuth,
+  getGuestAuth,
+  getGuestCaller,
   getUserCaller,
 } from './test-helpers';
 import { randProductName, randUuid } from '@ngneat/falso';
 import { testRouter } from './routes-test';
+import { appRouter } from '../app/routers';
 import { createCallerFactory } from '../app/trpc';
 import db from '../app/db/index';
+import { db as drizzleDb } from '../app/db/init-db';
+import { accounts } from '../app/schema';
+import { eq } from 'drizzle-orm';
 
 describe('permissions', () => {
   let teamId: string;
@@ -248,6 +255,163 @@ describe('permissions', () => {
       });
 
       expect(result?.code).toEqual('UNAUTHORIZED');
+    });
+  });
+
+  describe('guests', () => {
+    let publicBoardId: string;
+    let privateBoardId: string;
+
+    const guestCaller = (index: number) =>
+      createCaller(createTestContext(getGuestAuth(index)));
+
+    beforeAll(async () => {
+      for (let i = 0; i < 3; i++) {
+        await createGuest(i);
+      }
+
+      const owner = await getUserCaller(4);
+
+      publicBoardId = (await owner.board.create({ name: 'public' })).id;
+      privateBoardId = (await owner.board.create({ name: 'private' })).id;
+
+      await owner.board.changePrivacy({
+        boardId: publicBoardId,
+        isPublic: true,
+      });
+    });
+
+    it('account-only tiers are forbidden', async () => {
+      const caller = guestCaller(0);
+      const calls = [
+        () => caller.protected(),
+        () => caller.team({ teamId }),
+        () => caller.teamAdmin({ teamId }),
+        () => caller.teamMember({ teamId }),
+        () => caller.boardAdmin({ boardId: publicBoardId }),
+        () => caller.boardAccountMember({ boardId: publicBoardId }),
+      ];
+
+      for (const call of calls) {
+        const result = await errorCall(call);
+
+        expect(result?.code).toEqual('FORBIDDEN');
+        expect(result?.message).toEqual('ACCOUNT_REQUIRED');
+      }
+    });
+
+    it('cannot create boards, use api tokens or invites', async () => {
+      const caller = getGuestCaller(1);
+      const calls = [
+        () => caller.board.create({ name: 'nope' }),
+        () => caller.board.duplicate({ boardId: publicBoardId }),
+        () => caller.user.generateApiToken(),
+        () => caller.user.apiToken(),
+        () => caller.user.invites(),
+        () => caller.team.new({ name: 'nope' }),
+      ];
+
+      for (const call of calls) {
+        expect((await errorCall(call))?.code).toEqual('FORBIDDEN');
+      }
+
+      // the account check runs before the membership row is created
+      expect(
+        await db.board.getBoardUser(publicBoardId, getGuestAuth(1).sub),
+      ).toBeFalsy();
+    });
+
+    it('uses participant procedures', async () => {
+      const guest = getGuestAuth(0);
+      const caller = getGuestCaller(0);
+
+      expect((await guestCaller(0).participant()).ctx.user).toEqual(guest);
+      expect(await caller.user.user()).toMatchObject({
+        id: guest.sub,
+        name: guest.name,
+        email: null,
+        isGuest: true,
+        emailVerified: false,
+      });
+      expect(await caller.user.settings()).toBeTruthy();
+      expect((await caller.user.notifications({})).items).toEqual([]);
+    });
+
+    it('joins public boards only', async () => {
+      const caller = guestCaller(0);
+
+      const result = await caller.boardMember({ boardId: publicBoardId });
+
+      expect(result.ctx.userBoard.id).toEqual(publicBoardId);
+
+      const denied = await errorCall(() =>
+        caller.boardMember({ boardId: privateBoardId }),
+      );
+
+      expect(denied?.code).toEqual('UNAUTHORIZED');
+    });
+
+    it('cannot be made a board admin', async () => {
+      const owner = await getUserCaller(4);
+
+      const result = await errorCall(() =>
+        owner.board.changeRole({
+          boardId: publicBoardId,
+          userId: getGuestAuth(0).sub,
+          role: 'admin',
+        }),
+      );
+
+      expect(result?.code).toEqual('BAD_REQUEST');
+      expect(result?.message).toEqual('GUEST_CANNOT_BE_ADMIN');
+    });
+
+    it('cannot hold an api token', async () => {
+      const update = async () => {
+        await drizzleDb
+          .update(accounts)
+          .set({ apiTokenHash: 'x'.repeat(64) })
+          .where(eq(accounts.id, getGuestAuth(2).sub));
+      };
+
+      await expect(update()).rejects.toThrow(/accounts_identity_chk/);
+    });
+
+    it('loses access when link sharing is turned off', async () => {
+      const owner = await getUserCaller(4);
+
+      await owner.board.changePrivacy({
+        boardId: publicBoardId,
+        isPublic: false,
+      });
+
+      const result = await errorCall(() =>
+        guestCaller(0).boardMember({ boardId: publicBoardId }),
+      );
+
+      expect(result?.code).toEqual('UNAUTHORIZED');
+    });
+  });
+
+  describe('api tokens', () => {
+    it('cannot mint a token or remove the account', async () => {
+      const caller = createCallerFactory(appRouter)(
+        createTestContext({
+          ...getAuth(5),
+          via: 'api_token',
+        }),
+      );
+
+      for (const call of [
+        () => caller.user.generateApiToken(),
+        () => caller.user.removeAccount(),
+      ]) {
+        const result = await errorCall(call);
+
+        expect(result?.code).toEqual('FORBIDDEN');
+      }
+
+      expect(await db.user.getUser(getAuth(5).sub)).toBeTruthy();
     });
   });
 });

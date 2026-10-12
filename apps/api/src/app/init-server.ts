@@ -12,8 +12,10 @@ import {
 } from '@trpc/server/adapters/fastify';
 import { Server } from './server.js';
 import { setServer } from './global.js';
-import { createUserSessionCookie, getAuthUrl } from './auth.js';
-import { googleCallback } from './routers/auth-routes.js';
+import { authRoutes } from './routers/auth-routes.js';
+import { registerCsrfHook } from './auth/csrf.js';
+import { registerPrincipalHook } from './auth/principal.js';
+import { createSessionCookie, deleteExpiredSessions } from './auth/session.js';
 import { fileUpload } from './file-upload.js';
 import { registerTapizMcp } from './mcp.js';
 import { registerAgentSessionRoute } from './agent-auth.js';
@@ -86,6 +88,12 @@ await fastify.register(cors, {
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
 });
 
+// Instance hooks: CSRF at onRequest, the principal at preParsing (after the
+// routes' onRequest rate limit, before body parsing). Child plugins below
+// inherit them.
+registerCsrfHook(fastify);
+registerPrincipalHook(fastify);
+
 // The default key is the client IP (IPv6 grouped by /64), so a made-up cookie
 // no longer gets a fresh bucket.
 await fastify.register(import('@fastify/rate-limit'), {
@@ -101,6 +109,7 @@ const rateLimits = {
 };
 
 fastify.register(fileUpload);
+fastify.register(authRoutes);
 
 fastify.register(fastifyTRPCPlugin, {
   prefix: '/api/trpc',
@@ -141,26 +150,39 @@ fastify.register(async function (fastify) {
     const boardServer = server;
 
     fastify.io.on('connection', (socket) => {
-      boardServer.connection(
-        socket,
-        fastify.parseCookie(socket.request.headers.cookie ?? ''),
-      );
+      void boardServer
+        .connection(
+          socket,
+          fastify.parseCookie(socket.request.headers.cookie ?? ''),
+        )
+        .catch((e) => {
+          console.error(e);
+          socket.disconnect(true);
+        });
     });
   });
 
-  fastify.get('/api/auth', async (req, rep) => {
-    const authUrl = await getAuthUrl(rep);
+  // expired sessions lose their open sockets too
+  const sessionGc = setInterval(() => {
+    void deleteExpiredSessions()
+      .then((ids) => server?.disconnectSessions(ids, 'session_expired'))
+      .catch((e) => console.error(e));
+  }, 3600e3);
 
-    return rep.redirect(authUrl.href);
+  sessionGc.unref();
+
+  fastify.addHook('onClose', (_instance, done) => {
+    clearInterval(sessionGc);
+    done();
   });
-
-  fastify.register(googleCallback);
 
   registerAgentSessionRoute(fastify, {
     environment: process.env,
     authenticateApiToken,
     haveBoardAccess: db.board.haveAccess,
-    createSessionCookie: createUserSessionCookie,
+    // mints `via: 'session'` cookies, so the token holder passes
+    // requireSessionAuth; development only
+    createSessionCookie,
   });
 });
 

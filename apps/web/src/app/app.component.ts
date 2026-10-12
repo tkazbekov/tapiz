@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { AuthService } from './services/auth.service';
 import './app-node';
 import { Store } from '@ngrx/store';
 
@@ -19,7 +18,6 @@ import { GlobalStore } from './+state/global.store';
   imports: [RouterOutlet, ReconnectionComponent],
 })
 export class AppComponent {
-  #authService = inject(AuthService);
   #wsService = inject(WsService);
   #store = inject(Store);
   #matIconRegistry = inject(MatIconRegistry);
@@ -44,7 +42,6 @@ export class AppComponent {
     'token',
     'top-voted',
     'voting',
-    'google',
     'user',
     'templates',
     'download',
@@ -71,8 +68,6 @@ export class AppComponent {
         this.#wsService.close();
       }
     });
-
-    this.#authService.configureLogin();
   }
 
   showReconnection = this.#globalStore.wsConnectionLost;

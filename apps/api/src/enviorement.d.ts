@@ -3,18 +3,15 @@ import { type Server } from 'socket.io';
 declare global {
   namespace NodeJS {
     interface ProcessEnv {
-      DB_DATABASE: string;
-      DB_HOST: string;
-      DB_PASSWORD: string;
-      DB_PORT_HOST: string;
-      DB_USER: string;
       API_URL: string;
       API_HOST: string;
       API_PORT: string;
       FRONTEND_URL: string;
-      GOOGLE_CLIENT_ID: string;
-      GOOGLE_CLIENT_SECRET: string;
       AI_AGENT_LOGIN_ENABLED?: string;
+      SESSION_COOKIE_SECURE?: string;
+      TRUST_PROXY?: string;
+      UPLOADS_DIR?: string;
+      AUTH_LOG_RESET_LINKS?: string;
     }
   }
 }

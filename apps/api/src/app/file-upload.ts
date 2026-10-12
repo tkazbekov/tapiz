@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import db from './db/index.js';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +6,6 @@ import FastifyMultipart, {
   MultipartFile,
   MultipartValue,
 } from '@fastify/multipart';
-import { createAuthContext } from './app.context.js';
 import fastifyStatics from '@fastify/static';
 import { unlink, mkdirSync } from 'fs';
 import sharp from 'sharp';
@@ -35,12 +34,17 @@ const uploadFileNamePattern = /^[0-9a-f-]{36}\.webp$/;
 async function checkAccess(
   boardId: string,
   req: FastifyRequest,
-  res: FastifyReply,
+  { requireAccount = false } = {},
 ): Promise<CheckAccessResult> {
-  const context = await createAuthContext({ req, res });
+  const user = req.principal;
 
-  if (!context.user) {
+  if (!user) {
     return { success: false, code: 401, error: 'Unauthorized' };
+  }
+
+  // 403, not 401: the web app treats 401 as a lost session
+  if (requireAccount && user.isGuest) {
+    return { success: false, code: 403, error: 'ACCOUNT_REQUIRED' };
   }
 
   const board = await db.board.getBoard(boardId);
@@ -49,7 +53,7 @@ async function checkAccess(
     return { success: false, code: 404, error: 'Board not found' };
   }
 
-  const haveAccess = await db.board.haveAccess(boardId, context.user.sub);
+  const haveAccess = await db.board.haveAccess(boardId, user.sub);
 
   if (!haveAccess) {
     return { success: false, code: 401, error: 'Unauthorized' };
@@ -98,7 +102,9 @@ export async function fileUpload(fastify: FastifyInstance) {
         return { error: 'Invalid upload' };
       }
 
-      const access = await checkAccess(boardId.data, req, res);
+      const access = await checkAccess(boardId.data, req, {
+        requireAccount: true,
+      });
       if (!access.success) {
         res.code(access.code);
         return { error: access.error };
@@ -145,7 +151,7 @@ export async function fileUpload(fastify: FastifyInstance) {
         return { error: 'File not found' };
       }
 
-      const access = await checkAccess(file.boardId, req, res);
+      const access = await checkAccess(file.boardId, req);
 
       if (!access.success) {
         res.code(404);

@@ -166,7 +166,8 @@ export async function getTeamMembers(teamId: string): Promise<TeamMember[]> {
       return {
         id: it.accounts?.id,
         name: it.accounts.name,
-        email: it.accounts?.email,
+        // team members are accounts, which always have an email
+        email: it.accounts.email ?? '',
         role: it.team_members?.role,
       };
     });

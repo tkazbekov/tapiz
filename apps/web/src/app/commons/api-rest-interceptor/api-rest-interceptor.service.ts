@@ -1,15 +1,16 @@
 import { inject } from '@angular/core';
 import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { catchError } from 'rxjs/operators';
-import { Router } from '@angular/router';
+import { Store } from '@ngrx/store';
 import { ConfigService } from '../../services/config.service';
 import { HttpInterceptorFn } from '@angular/common/http';
 import { throwError } from 'rxjs';
 import { WsService } from '../../modules/ws/services/ws.service';
+import { AppActions } from '../../+state/app.actions';
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const configService = inject(ConfigService);
-  const router = inject(Router);
+  const store = inject(Store);
   const wsService = inject(WsService);
 
   // update api-config.service.ts
@@ -35,10 +36,15 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       });
     }
 
+    // auth endpoints report their own errors (bad credentials etc.)
+    if (req.url.startsWith(`${configService.config.API_URL}/auth/`)) {
+      return next(request);
+    }
+
     return next(request).pipe(
       catchError((err: HttpErrorResponse) => {
         if (err.status === 401) {
-          void router.navigate(['/login']);
+          store.dispatch(AppActions.unauthorized());
         }
 
         return throwError(() => err);

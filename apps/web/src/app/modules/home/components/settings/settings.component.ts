@@ -6,11 +6,17 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { ReactiveFormsModule, FormControl, FormGroup } from '@angular/forms';
+import {
+  ReactiveFormsModule,
+  FormControl,
+  FormGroup,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import {
   AuthUserModel,
@@ -25,7 +31,10 @@ import { Store } from '@ngrx/store';
 import { appFeature } from '../../../../+state/app.reducer';
 import { UserApiService } from '../../../../services/user-api.service';
 import { AppActions } from '../../../../+state/app.actions';
-import { AuthService } from '../../../../services/auth.service';
+import { AuthApiService } from '../../../../services/auth-api.service';
+import { WsService } from '../../../ws/services/ws.service';
+import { finalize } from 'rxjs';
+import { authErrorMessage } from '../../../auth/auth-errors';
 
 @Component({
   selector: 'tapiz-settings',
@@ -174,6 +183,75 @@ import { AuthService } from '../../../../services/auth.service';
           </button>
         </div>
       </form>
+
+      <form
+        class="password-form"
+        [formGroup]="passwordForm"
+        (ngSubmit)="changePassword()">
+        <section>
+          <div class="section-header">
+            <h2>Change password</h2>
+          </div>
+
+          <div class="password-fields">
+            <!-- lets password managers match the saved credential -->
+            <input
+              type="email"
+              autocomplete="username"
+              [value]="user()?.email ?? ''"
+              readonly
+              hidden />
+
+            <mat-form-field>
+              <mat-label>Current password</mat-label>
+              <input
+                matInput
+                type="password"
+                formControlName="currentPassword"
+                autocomplete="current-password"
+                required />
+            </mat-form-field>
+
+            <mat-form-field>
+              <mat-label>New password</mat-label>
+              <input
+                matInput
+                type="password"
+                formControlName="newPassword"
+                autocomplete="new-password"
+                minlength="8"
+                maxlength="128"
+                required />
+              <mat-hint>At least 8 characters</mat-hint>
+            </mat-form-field>
+
+            @if (passwordError()) {
+              <p
+                class="password-error"
+                role="alert">
+                {{ passwordError() }}
+              </p>
+            }
+
+            <div class="password-actions">
+              @if (passwordChanged()) {
+                <span
+                  class="saved"
+                  role="status">
+                  Password changed. Other sessions were signed out.
+                </span>
+              }
+
+              <button
+                mat-stroked-button
+                type="submit"
+                [disabled]="passwordSaving()">
+                Change password
+              </button>
+            </div>
+          </div>
+        </section>
+      </form>
     </div>
   `,
   styleUrl: './settings.component.scss',
@@ -184,6 +262,7 @@ import { AuthService } from '../../../../services/auth.service';
     MatCheckboxModule,
     MatFormFieldModule,
     MatIconModule,
+    MatInputModule,
     MatSelectModule,
     ColorPickerComponent,
   ],
@@ -191,7 +270,8 @@ import { AuthService } from '../../../../services/auth.service';
 export class SettingsComponent {
   #store = inject(Store);
   #userApiService = inject(UserApiService);
-  #authService = inject(AuthService);
+  #authApiService = inject(AuthApiService);
+  #wsService = inject(WsService);
 
   user = this.#store.selectSignal(appFeature.selectUser);
   saved = signal(false);
@@ -207,6 +287,9 @@ export class SettingsComponent {
     );
   });
   fontFamilyOptions = noteFontFamilyOptions;
+  passwordSaving = signal(false);
+  passwordChanged = signal(false);
+  passwordError = signal<string | null>(null);
   #formInitialized = false;
 
   form = new FormGroup({
@@ -230,6 +313,21 @@ export class SettingsComponent {
       italic: new FormControl(defaultUserSettings.noteDefaults.italic, {
         nonNullable: true,
       }),
+    }),
+  });
+
+  passwordForm = new FormGroup({
+    currentPassword: new FormControl('', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    newPassword: new FormControl('', {
+      nonNullable: true,
+      validators: [
+        Validators.required,
+        Validators.minLength(8),
+        Validators.maxLength(128),
+      ],
     }),
   });
 
@@ -312,8 +410,47 @@ export class SettingsComponent {
       };
 
       this.#store.dispatch(AppActions.setUser({ user }));
-      this.#authService.setLocalStoreUser(user);
       this.saved.set(true);
     });
+  }
+
+  changePassword() {
+    if (this.passwordForm.invalid || this.passwordSaving()) {
+      this.passwordForm.markAllAsTouched();
+      return;
+    }
+
+    this.passwordSaving.set(true);
+    this.passwordChanged.set(false);
+    this.passwordError.set(null);
+
+    // The server rotates the session cookie and disconnects the sockets of
+    // the old sessions. Close ours first and reconnect with the new cookie.
+    this.#wsService.close();
+
+    this.#authApiService
+      .changePassword(this.passwordForm.getRawValue())
+      .pipe(
+        finalize(() => {
+          this.passwordSaving.set(false);
+          this.#wsService.listen();
+        }),
+      )
+      .subscribe({
+        next: () => {
+          this.passwordForm.reset();
+          this.passwordChanged.set(true);
+          // the server revokes the personal API token with the password
+          this.apiTokenInfo.set({ hasToken: false, createdAt: null });
+          this.generatedApiToken.set(null);
+        },
+        error: (error) => {
+          this.passwordError.set(
+            authErrorMessage(error, {
+              INVALID_CREDENTIALS: 'The current password is incorrect.',
+            }),
+          );
+        },
+      });
   }
 }

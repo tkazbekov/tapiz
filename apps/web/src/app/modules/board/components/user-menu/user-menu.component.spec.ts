@@ -5,7 +5,6 @@ import { Store } from '@ngrx/store';
 import { AuthUserModel, defaultUserSettings } from '@tapiz/board-commons';
 import { of, throwError } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuthService } from '../../../../services/auth.service';
 import { ConfigService } from '../../../../services/config.service';
 import { UserApiService } from '../../../../services/user-api.service';
 import { BoardWheelInputService } from '../../services/board-wheel-input.service';
@@ -16,11 +15,13 @@ describe('UserMenuComponent', () => {
     id: 'user-1',
     name: 'Ada',
     picture: '',
+    isGuest: false,
+    email: 'ada@example.com',
+    emailVerified: true,
     settings: defaultUserSettings,
   });
   let dispatch: ReturnType<typeof vi.fn>;
   let updateSettings: ReturnType<typeof vi.fn>;
-  let setLocalStoreUser: ReturnType<typeof vi.fn>;
   let setDemoMode: ReturnType<typeof vi.fn>;
   let openSnackBar: ReturnType<typeof vi.fn>;
   const config = { DEMO: false };
@@ -33,11 +34,13 @@ describe('UserMenuComponent', () => {
       id: 'user-1',
       name: 'Ada',
       picture: '',
+      isGuest: false,
+      email: 'ada@example.com',
+      emailVerified: true,
       settings: defaultUserSettings,
     });
     dispatch = vi.fn();
     updateSettings = vi.fn((settings) => of(settings));
-    setLocalStoreUser = vi.fn();
     setDemoMode = vi.fn((mode) => wheelMode.set(mode));
     openSnackBar = vi.fn();
 
@@ -54,12 +57,6 @@ describe('UserMenuComponent', () => {
         {
           provide: UserApiService,
           useValue: { updateSettings },
-        },
-        {
-          provide: AuthService,
-          useValue: {
-            setLocalStoreUser,
-          },
         },
         {
           provide: MatSnackBar,
@@ -101,7 +98,8 @@ describe('UserMenuComponent', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ user: updatedUser }),
     );
-    expect(setLocalStoreUser).toHaveBeenCalledWith(updatedUser);
+    // the session cookie is the source of truth, nothing is cached locally
+    expect(localStorage.getItem('user')).toBeNull();
   });
 
   it('does not save the already selected mode', () => {
@@ -158,8 +156,6 @@ describe('UserMenuComponent', () => {
       2,
       expect.objectContaining({ user: currentUser }),
     );
-    expect(setLocalStoreUser).toHaveBeenNthCalledWith(1, optimisticUser);
-    expect(setLocalStoreUser).toHaveBeenNthCalledWith(2, currentUser);
     expect(openSnackBar).toHaveBeenCalledWith(
       'Could not save navigation preference',
       'Close',

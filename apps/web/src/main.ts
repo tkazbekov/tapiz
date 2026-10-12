@@ -1,6 +1,8 @@
 import {
   enableProdMode,
   importProvidersFrom,
+  inject,
+  provideAppInitializer,
   provideBrowserGlobalErrorListeners,
   provideZonelessChangeDetection,
 } from '@angular/core';
@@ -25,6 +27,7 @@ import { authInterceptor } from './app/commons/api-rest-interceptor/api-rest-int
 import { provideEffects } from '@ngrx/effects';
 import * as appEffects from './app/+state/app.effects';
 import { debugMetaReducers } from './app/debug/meta-reducer';
+import { AuthService } from './app/services/auth.service';
 
 export function prefersReducedMotion(): boolean {
   const mediaQueryList = window.matchMedia('(prefers-reduced-motion)');
@@ -63,6 +66,8 @@ bootstrapApplication(AppComponent, {
 
     provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
     provideRouter(APP_ROUTES, withComponentInputBinding()),
+    // load the session before the first navigation so guards see the user
+    provideAppInitializer(() => inject(AuthService).bootstrap()),
     provideZonelessChangeDetection(),
     provideBrowserGlobalErrorListeners(),
     {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  participantProcedure,
   protectedProcedure,
   teamProcedure,
   router,
@@ -8,9 +9,16 @@ import {
   boardProcedure,
   boardAdminProcedure,
   boardMemberProcedure,
+  boardAccountMemberProcedure,
 } from '../app/trpc.js';
 
 export const testRouter = router({
+  participant: participantProcedure.query((req) => {
+    return {
+      input: req.input,
+      ctx: req.ctx,
+    };
+  }),
   protected: protectedProcedure.query((req) => {
     return {
       input: req.input,
@@ -78,6 +86,18 @@ export const testRouter = router({
       };
     }),
   boardMember: boardMemberProcedure
+    .input(
+      z.object({
+        boardId: z.uuid(),
+      }),
+    )
+    .query((req) => {
+      return {
+        input: req.input,
+        ctx: req.ctx,
+      };
+    }),
+  boardAccountMember: boardAccountMemberProcedure
     .input(
       z.object({
         boardId: z.uuid(),

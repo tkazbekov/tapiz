@@ -3,32 +3,30 @@ import {
   OnInit,
   inject,
   ChangeDetectionStrategy,
+  input,
 } from '@angular/core';
 import { Router } from '@angular/router';
-import { Store } from '@ngrx/store';
-import { AppActions } from '../../../../+state/app.actions';
-import { UserApiService } from '../../../../services/user-api.service';
 import { AuthService } from '../../../../services/auth.service';
+import { safeReturnUrl } from '../../../../utils/safe-return-url';
+
+// Landing page of the development agent login, the session cookie is already set
 @Component({
   selector: 'tapiz-login-redirect',
   template: '',
-  changeDetection: ChangeDetectionStrategy.Eager,
-  styleUrls: [],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LoginRedirectComponent implements OnInit {
-  router = inject(Router);
-  store = inject(Store);
-  userApiService = inject(UserApiService);
-  authService = inject(AuthService);
+  #router = inject(Router);
+  #authService = inject(AuthService);
+
+  returnUrl = input<string>();
 
   ngOnInit(): void {
-    this.userApiService.user().subscribe((user) => {
-      this.store.dispatch(AppActions.setUser({ user }));
-      this.authService.setLocalStoreUser(user);
-
-      const url = sessionStorage.getItem('url') ?? '/';
-      sessionStorage.removeItem('url');
-      this.router.navigateByUrl(url);
-    });
+    void this.#authService
+      .refresh()
+      .catch(() => null)
+      .then(() => {
+        void this.#router.navigateByUrl(safeReturnUrl(this.returnUrl()));
+      });
   }
 }

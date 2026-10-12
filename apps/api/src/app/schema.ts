@@ -8,6 +8,7 @@ import {
   boolean,
   unique,
   pgEnum,
+  index,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import { TuNode, UserSettings } from '@tapiz/board-commons';
@@ -15,12 +16,32 @@ import { TuNode, UserSettings } from '@tapiz/board-commons';
 export const roleEnum = pgEnum('role', ['admin', 'member']);
 export const roleEnumWithGuest = pgEnum('role', ['admin', 'member', 'guest']);
 
+// accounts_identity_chk lives in drizzle/0011; re-declare with check() after
+// the drizzle upgrade. Guests have no email, password or token.
 export const accounts = pgTable('accounts', {
   id: varchar('id', { length: 256 }).primaryKey(),
   name: varchar('name', { length: 256 }).notNull(),
-  email: varchar('email', { length: 320 }).notNull().unique(),
+  // always stored trimmed and lower-cased; null for guests
+  email: varchar('email', { length: 320 }).unique(),
   picture: varchar('picture'),
-  googleId: varchar('google_id').unique(),
+  // scrypt$<log2N>$<r>$<p>$<salt>$<key>
+  passwordHash: varchar('password_hash', { length: 255 }),
+  isGuest: boolean('is_guest').notNull().default(false),
+  emailVerifiedAt: timestamp('email_verified_at', {
+    withTimezone: true,
+    mode: 'date',
+  }),
+  // sha256 hex of the emailed tokens
+  emailVerifyHash: varchar('email_verify_hash', { length: 64 }).unique(),
+  emailVerifyExpiresAt: timestamp('email_verify_expires_at', {
+    withTimezone: true,
+    mode: 'date',
+  }),
+  passwordResetHash: varchar('password_reset_hash', { length: 64 }).unique(),
+  passwordResetExpiresAt: timestamp('password_reset_expires_at', {
+    withTimezone: true,
+    mode: 'date',
+  }),
   apiTokenHash: varchar('api_token_hash', { length: 64 }).unique(),
   apiTokenCreatedAt: timestamp('api_token_created_at', { mode: 'string' }),
   settings: json('settings')
@@ -29,15 +50,31 @@ export const accounts = pgTable('accounts', {
     .default(
       sql`'{"wheelInputMode":"auto","noteDefaults":{"backgroundColor":"#fbb980","textColor":"#000000","fontFamily":"\\"Inter\\", -apple-system, system-ui, sans-serif","bold":false,"italic":false}}'::json`,
     ),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+    .notNull()
+    .defaultNow(),
 });
 
-export const accountsToSession = pgTable('account_session', {
-  id: varchar('id').primaryKey(),
-  expiresAt: timestamp('expires_at').notNull(),
-  userId: varchar('user_id')
-    .notNull()
-    .references(() => accounts.id),
-});
+export const sessions = pgTable(
+  'sessions',
+  {
+    // sha256(token) hex; the token itself is never stored
+    id: varchar('id', { length: 64 }).primaryKey(),
+    accountId: varchar('account_id', { length: 256 })
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }).notNull(),
+  },
+  (t) => ({
+    accountIdx: index('sessions_account_id_idx').on(t.accountId),
+  }),
+);
 
 export const usersRelations = relations(accounts, ({ many }) => ({
   accountsToBoards: many(acountsToBoards),

@@ -58,7 +58,12 @@ export const teamRouter = router({
       }),
     )
     .mutation(async (req) => {
-      const invitedUser = await db.user.getUserByEmail(req.input.email);
+      // An unverified address may belong to someone else, so it only gets
+      // the invitation stored by email, which its verified owner can claim.
+      const matchedUser = await db.user.getUserByEmail(req.input.email);
+      const invitedUser = matchedUser?.emailVerifiedAt
+        ? matchedUser
+        : undefined;
 
       let invitations = await db.user.getUserInvitationsByEmail(
         req.input.email,

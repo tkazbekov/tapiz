@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { startDB } from '../app/db/init-db';
 import {
+  createGuest,
   createMultipleUsers,
   getAuth,
+  getGuestAuth,
   getUserCaller,
   initTestServer,
   initWs,
@@ -15,6 +17,8 @@ import { revokeBoardAccess } from '../app/global';
 import { isUserNode } from '@tapiz/board-commons';
 import db from '../app/db';
 import { addTeamMember } from '../app/db/user-db';
+import { io } from 'socket.io-client';
+import customParser from 'socket.io-msgpack-parser';
 
 describe('ws', () => {
   let socket: Awaited<ReturnType<typeof initWs>>;
@@ -64,6 +68,7 @@ describe('ws', () => {
   beforeAll(async () => {
     await startDB();
     await createMultipleUsers();
+    await createGuest(0);
     wsServer = await initTestServer(port);
     socket = await initWs(port);
   });
@@ -93,7 +98,7 @@ describe('ws', () => {
     const caller = await getUserCaller(1);
     const privateBoard = await caller.board.create({ name: 'private' });
 
-    const intruder = await connect('auth=2');
+    const intruder = await connect('tapiz_session=2');
     const errors = errorsOf(intruder);
 
     await sendFrom(intruder, { action: 'join', boardId: privateBoard.id });
@@ -115,7 +120,7 @@ describe('ws', () => {
     const board = await caller.board.create({ name: 'public' });
     await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
 
-    const visitor = await connect('auth=3');
+    const visitor = await connect('tapiz_session=3');
 
     await sendFrom(visitor, { action: 'join', boardId: board.id });
 
@@ -136,7 +141,7 @@ describe('ws', () => {
     const board = await caller.board.create({ name: 'revoke' });
     await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
 
-    const visitor = await connect('auth=4');
+    const visitor = await connect('tapiz_session=4');
     const errors = errorsOf(visitor);
 
     visitor.emit('sub', { type: 'board', id: board.id });
@@ -193,7 +198,7 @@ describe('ws', () => {
       ),
     );
 
-    const secondTab = await connect('auth=1');
+    const secondTab = await connect('tapiz_session=1');
     await sendFrom(secondTab, { action: 'join', boardId: board.id });
 
     await vi.waitFor(() => {
@@ -210,7 +215,10 @@ describe('ws', () => {
 
   it('user events reach every socket of the user', async () => {
     const userId = getAuth(5).sub;
-    const tabs = [await connect('auth=5'), await connect('auth=5')];
+    const tabs = [
+      await connect('tapiz_session=5'),
+      await connect('tapiz_session=5'),
+    ];
     const received = tabs.map(() => [] as unknown[]);
 
     tabs.forEach((tab, index) => {
@@ -239,7 +247,7 @@ describe('ws', () => {
     const boardA = await caller.board.create({ name: 'A' });
     const boardB = await caller.board.create({ name: 'B' });
 
-    const tab = await connect('auth=6');
+    const tab = await connect('tapiz_session=6');
     const tabId = tab.id ?? '';
     const client = wsServer.clients.find((it) => it.socket.id === tabId);
 
@@ -271,7 +279,7 @@ describe('ws', () => {
     const caller = await getUserCaller(7);
     const board = await caller.board.create({ name: 'reconnect' });
 
-    const tab = await connect('auth=7');
+    const tab = await connect('tapiz_session=7');
 
     // a fresh socket only re-sends `join`, never `sub`
     await sendFrom(tab, { action: 'join', boardId: board.id });
@@ -292,7 +300,7 @@ describe('ws', () => {
     const board = await caller.board.create({ name: 'flush' });
     const noteId = randomUUID();
 
-    const tab = await connect('auth=8');
+    const tab = await connect('tapiz_session=8');
     await sendFrom(tab, { action: 'join', boardId: board.id });
     await sendFrom(tab, [
       {
@@ -340,7 +348,7 @@ describe('ws', () => {
     const board = await owner.board.create({ name: 'solo', teamId: team.id });
     await owner.board.changePrivacy({ boardId: board.id, isPublic: true });
 
-    const visitor = await connect('auth=10');
+    const visitor = await connect('tapiz_session=10');
     const errors = errorsOf(visitor);
     await sendFrom(visitor, { action: 'join', boardId: board.id });
 
@@ -369,7 +377,7 @@ describe('ws', () => {
     await addTeamMember(getAuth(12).sub, team.id, 'member');
     const board = await admin.board.create({ name: 'team', teamId: team.id });
 
-    const member = await connect('auth=12');
+    const member = await connect('tapiz_session=12');
     const memberId = member.id ?? '';
     const errors = errorsOf(member);
 
@@ -405,5 +413,144 @@ describe('ws', () => {
       }),
     ).toEqual(true);
     expect(await tryWs(port)).toEqual(true);
+  });
+
+  // listeners attached before the handshake, so early events aren't missed
+  const authErrorsOf = (cookie: string) => {
+    const ws = io(`ws://localhost:${port}`, {
+      transports: ['websocket'],
+      parser: customParser,
+      reconnection: false,
+      extraHeaders: { Cookie: cookie },
+    });
+    const errors: string[] = [];
+
+    ws.on('auth_error', (reason: string) => errors.push(reason));
+
+    return { ws, errors };
+  };
+
+  it('disconnects sockets without a valid session', async () => {
+    for (const cookie of ['', 'tapiz_session=nope', 'tapiz_session=g19']) {
+      const { ws, errors } = authErrorsOf(cookie);
+
+      await vi.waitFor(() => {
+        expect(errors).toEqual(['unauthenticated']);
+        expect(ws.connected).toEqual(false);
+      });
+
+      ws.close();
+    }
+  });
+
+  it('disconnects the sockets of ended sessions only', async () => {
+    const ended = [
+      authErrorsOf('tapiz_session=13'),
+      authErrorsOf('tapiz_session=13'),
+    ];
+    const kept = authErrorsOf('tapiz_session=14');
+
+    await vi.waitFor(() => {
+      expect(
+        wsServer.clients.filter((client) =>
+          [getAuth(13).sub, getAuth(14).sub].includes(client.id),
+        ),
+      ).toHaveLength(3);
+    });
+
+    wsServer.disconnectSessions(['test-13'], 'logged_out');
+
+    await vi.waitFor(() => {
+      ended.forEach(({ ws, errors }) => {
+        expect(errors).toEqual(['logged_out']);
+        expect(ws.connected).toEqual(false);
+      });
+    });
+    expect(kept.ws.connected).toEqual(true);
+    expect(wsServer.clients.some((it) => it.id === getAuth(13).sub)).toEqual(
+      false,
+    );
+
+    wsServer.disconnectAccount(getAuth(14).sub, 'account_deleted');
+
+    await vi.waitFor(() => {
+      expect(kept.errors).toEqual(['account_deleted']);
+    });
+
+    [...ended, kept].forEach(({ ws }) => ws.close());
+  });
+
+  it('pushes identity changes to the board', async () => {
+    const caller = await getUserCaller(15);
+    const board = await caller.board.create({ name: 'identity' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const tab = await connect('tapiz_session=15');
+    const watcher = await connect('tapiz_session=16');
+    const received: unknown[] = [];
+
+    watcher.on('board', (msgs: unknown[]) => received.push(...msgs));
+
+    await sendFrom(tab, { action: 'join', boardId: board.id });
+    await sendFrom(watcher, { action: 'join', boardId: board.id });
+
+    wsServer.updateIdentity(getAuth(15).sub, {
+      name: 'Renamed',
+      sessionId: 'new-session',
+    });
+
+    const userNode = () =>
+      wsServer
+        .getStateBoardUsers(board.id)
+        .find((node) => node.id === getAuth(15).sub);
+
+    expect(userNode()?.content).toMatchObject({ name: 'Renamed' });
+    expect(
+      wsServer.clients.find((client) => client.socket.id === tab.id),
+    ).toMatchObject({ username: 'Renamed', sessionId: 'new-session' });
+
+    await vi.waitFor(() => {
+      expect(received).toContainEqual({
+        type: expect.any(String),
+        data: [
+          {
+            op: 'patch',
+            data: {
+              type: 'user',
+              id: getAuth(15).sub,
+              content: { name: 'Renamed' },
+            },
+          },
+        ],
+      });
+    });
+
+    tab.close();
+    watcher.close();
+  });
+
+  it('guests join public boards as non-admins', async () => {
+    const caller = await getUserCaller(17);
+    const board = await caller.board.create({ name: 'guests' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const guest = await connect('tapiz_session=g0');
+
+    await sendFrom(guest, { action: 'join', boardId: board.id });
+
+    const client = wsServer.clients.find((it) => it.socket.id === guest.id);
+
+    await vi.waitFor(() => {
+      expect(client?.boardId).toEqual(board.id);
+    });
+
+    expect(client?.isAdmin).toEqual(false);
+    expect(
+      wsServer
+        .getStateBoardUsers(board.id)
+        .find((node) => node.id === getGuestAuth(0).sub)?.content,
+    ).toMatchObject({ name: getGuestAuth(0).name, isGuest: true });
+
+    guest.close();
   });
 });
