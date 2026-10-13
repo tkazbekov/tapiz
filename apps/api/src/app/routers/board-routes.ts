@@ -259,6 +259,13 @@ export const boardRouter = router({
       }),
     )
     .mutation(async (req) => {
+      if (
+        req.input.teamId &&
+        !(await db.team.getUserTeam(req.input.teamId, req.ctx.user.sub))
+      ) {
+        throw new TRPCError({ code: 'UNAUTHORIZED' });
+      }
+
       await db.board.transferBoard(req.input.boardId, req.input.teamId ?? null);
 
       if (!req.input.teamId) {

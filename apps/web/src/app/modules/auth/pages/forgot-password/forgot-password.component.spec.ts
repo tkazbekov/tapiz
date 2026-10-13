@@ -49,7 +49,7 @@ describe('ForgotPasswordComponent', () => {
       throw new Error('Expected the reset form');
     }
 
-    let submitEvent: Event | null = null;
+    let submitEvent = null as Event | null;
     form.addEventListener('submit', (event) => (submitEvent = event));
 
     input.value = 'ada@example.com';

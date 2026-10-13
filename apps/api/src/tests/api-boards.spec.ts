@@ -181,6 +181,29 @@ describe('board', () => {
     expect(board.teamId).toEqual(null);
   });
 
+  it('transfer board only into a team the admin belongs to', async () => {
+    const callerUser1 = getUserCaller(1);
+    const otherTeam = await db.team.createTeam('foreign team', getAuth(5).sub);
+
+    const resultCreateBoard = await callerUser1.board.create({
+      name: randProductName(),
+    });
+
+    const result = await errorCall(() =>
+      callerUser1.board.transferBoard({
+        boardId: resultCreateBoard.id,
+        teamId: otherTeam.id,
+      }),
+    );
+
+    const board = await callerUser1.board.board({
+      boardId: resultCreateBoard.id,
+    });
+
+    expect(result?.code).toEqual('UNAUTHORIZED');
+    expect(board.teamId).toEqual(null);
+  });
+
   it('delete board only by admin', async () => {
     const callerUser1 = await getUserCaller(1);
     const callerUser2 = await getUserCaller(2);
