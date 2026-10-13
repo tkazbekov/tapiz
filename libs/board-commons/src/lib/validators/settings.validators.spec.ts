@@ -37,6 +37,29 @@ describe('SETTINGS_VALIDATOR', () => {
     });
   });
 
+  it('accepts an unlimited vote budget', async () => {
+    const result = await SETTINGS_VALIDATOR.patch(
+      settingsNode({ votesPerUser: null }),
+      { ...state, node: settingsNode({ votesPerUser: 3 }) },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.content).toEqual({
+      votesPerUser: null,
+    });
+  });
+
+  it('only returns the vote budget when it is patched', async () => {
+    const result = await SETTINGS_VALIDATOR.patch(
+      settingsNode({ votesPerUser: 3 }),
+      { ...state, node: settingsNode({ readOnly: true }) },
+    );
+
+    expect(result.success && result.data.content).toEqual({
+      votesPerUser: 3,
+    });
+  });
+
   it('rejects patches from non admins', async () => {
     const result = await SETTINGS_VALIDATOR.patch(
       settingsNode({ readOnly: false }),

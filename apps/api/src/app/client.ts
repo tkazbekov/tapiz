@@ -3,6 +3,7 @@ import {
   StateActions,
   TuNode,
   UserNode,
+  type UserVote,
 } from '@tapiz/board-commons';
 import { Server } from './server.js';
 import { type Socket } from 'socket.io';
@@ -174,7 +175,64 @@ export class Client {
       return [];
     }
 
-    return this.updateSendAllStateActions(validationResult);
+    const applied = this.updateSendAllStateActions(validationResult);
+
+    this.sendVoteCorrections(messages, applied);
+
+    return applied;
+  }
+
+  // the server rewrites votes (other users' entries, budget), so the sender's
+  // optimistic votes are corrected when the stored ones differ
+  private sendVoteCorrections(sent: StateActions[], applied: StateActions[]) {
+    // the final votes per node of a batch
+    const finalVotes = (actions: StateActions[]) => {
+      const votes = new Map<string, { type: string; votes: UserVote[] }>();
+
+      for (const action of actions) {
+        const content = action?.op !== 'remove' && action?.data?.content;
+        const type = action?.data?.type;
+
+        if (
+          !content ||
+          typeof content !== 'object' ||
+          !('votes' in content) ||
+          !Array.isArray(content.votes) ||
+          action.parent ||
+          (type !== 'note' && type !== 'group')
+        ) {
+          continue;
+        }
+
+        votes.set(action.data.id, { type, votes: content.votes });
+      }
+
+      return votes;
+    };
+
+    const asMap = (votes: UserVote[]) =>
+      new Map(votes.map((it) => [it?.userId, it?.vote]));
+    const sentVotes = finalVotes(sent);
+    const corrections: StateActions[] = [];
+
+    for (const [id, { type, votes }] of finalVotes(applied)) {
+      const stored = asMap(votes);
+      const own = asMap(sentVotes.get(id)?.votes ?? []);
+      const same =
+        stored.size === own.size &&
+        [...stored].every(([userId, vote]) => own.get(userId) === vote);
+
+      if (!same) {
+        corrections.push({
+          op: 'patch',
+          data: { id, type, content: { votes } },
+        });
+      }
+    }
+
+    if (corrections.length) {
+      this.sendToClient(this.getStateAction(corrections));
+    }
   }
 
   unauthorizedClose(disconnect = true) {

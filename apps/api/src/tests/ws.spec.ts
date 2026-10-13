@@ -517,6 +517,147 @@ describe('ws', () => {
     member.close();
   });
 
+  describe('votes', () => {
+    const noteContent = (ownerId: string) => ({
+      text: 'vote me',
+      position: { x: 0, y: 0 },
+      layer: 0,
+      ownerId,
+      votes: [],
+      emojis: [],
+      drawing: [],
+      width: 240,
+      height: 160,
+      color: '#fee2e2',
+    });
+
+    const voteOn = (
+      noteId: string,
+      votes: { userId: string; vote: number }[],
+    ) => [
+      { op: 'patch', data: { id: noteId, type: 'note', content: { votes } } },
+    ];
+
+    const storedVotes = (boardId: string, noteId: string) =>
+      (
+        wsServer.getBoard(boardId)?.find((it) => it.id === noteId)?.content as
+          { votes: { userId: string; vote: number }[] } | undefined
+      )?.votes;
+
+    // owner (admin) and a member on a public board with one note
+    const votingBoard = async (owner: number, member: number) => {
+      const caller = await getUserCaller(owner);
+      const board = await caller.board.create({ name: 'votes' });
+      await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+      const admin = await connect(`tapiz_session=${owner}`);
+      const other = await connect(`tapiz_session=${member}`);
+      await sendFrom(admin, { action: 'join', boardId: board.id });
+      await sendFrom(other, { action: 'join', boardId: board.id });
+
+      const noteId = randomUUID();
+
+      await sendFrom(admin, [
+        {
+          op: 'add',
+          data: {
+            id: noteId,
+            type: 'note',
+            content: noteContent(getAuth(owner).sub),
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(storedVotes(board.id, noteId)).toEqual([]);
+      });
+
+      return { board, admin, other, noteId };
+    };
+
+    it('keeps concurrent votes of two users', async () => {
+      const { board, admin, other, noteId } = await votingBoard(27, 28);
+      const adminId = getAuth(27).sub;
+      const otherId = getAuth(28).sub;
+
+      // each client only knows its own vote
+      admin.emit('board', voteOn(noteId, [{ userId: adminId, vote: 1 }]));
+      other.emit('board', voteOn(noteId, [{ userId: otherId, vote: 1 }]));
+
+      await vi.waitFor(() => {
+        expect(storedVotes(board.id, noteId)).toHaveLength(2);
+      });
+      expect(storedVotes(board.id, noteId)).toEqual(
+        expect.arrayContaining([
+          { userId: adminId, vote: 1 },
+          { userId: otherId, vote: 1 },
+        ]),
+      );
+
+      admin.close();
+      other.close();
+    });
+
+    it("can't remove the vote of another user", async () => {
+      const { board, admin, other, noteId } = await votingBoard(29, 30);
+      const adminId = getAuth(29).sub;
+
+      await sendFrom(admin, voteOn(noteId, [{ userId: adminId, vote: 2 }]));
+      await sendFrom(other, voteOn(noteId, []));
+      await sendFrom(other, voteOn(noteId, [{ userId: adminId, vote: 0 }]));
+
+      expect(storedVotes(board.id, noteId)).toEqual([
+        { userId: adminId, vote: 2 },
+      ]);
+
+      admin.close();
+      other.close();
+    });
+
+    it('clamps votes over the budget and corrects the sender', async () => {
+      const { board, admin, other, noteId } = await votingBoard(31, 32);
+      const otherId = getAuth(32).sub;
+
+      await sendFrom(admin, [
+        {
+          op: 'add',
+          data: {
+            id: randomUUID(),
+            type: 'settings',
+            content: { votesPerUser: 2 },
+          },
+        },
+      ]);
+
+      const frames: string[] = [];
+      other.on('board', (msg: unknown) => frames.push(JSON.stringify(msg)));
+
+      await sendFrom(other, voteOn(noteId, [{ userId: otherId, vote: 1 }]));
+      await sendFrom(other, voteOn(noteId, [{ userId: otherId, vote: 2 }]));
+
+      expect(frames).toEqual([]);
+
+      await sendFrom(other, voteOn(noteId, [{ userId: otherId, vote: 3 }]));
+
+      expect(storedVotes(board.id, noteId)).toEqual([
+        { userId: otherId, vote: 2 },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(frames).toHaveLength(1);
+      });
+      expect(JSON.parse(frames[0])).toEqual([
+        {
+          type: '[Board] State action',
+          data: voteOn(noteId, [{ userId: otherId, vote: 2 }]),
+        },
+      ]);
+
+      admin.close();
+      other.close();
+    });
+  });
+
   it('removing an account revokes its single-member team boards', async () => {
     const owner = await getUserCaller(9);
     const team = await db.team.createTeam('solo team', getAuth(9).sub);

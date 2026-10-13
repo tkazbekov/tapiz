@@ -9,6 +9,8 @@ const settingsBase = z.object({
   anonymousMode: z.boolean(),
   hideNoteAuthor: z.boolean(),
   allowPublicPosts: z.boolean(),
+  // votes each user can spend on the board; null or 0 is unlimited
+  votesPerUser: z.number().int().min(0).max(999).nullable().optional(),
   backgroundColor: z.string().refine(colorValidator).optional(),
   dotsColor: z.string().refine(colorValidator).optional(),
   boardStartingView: z

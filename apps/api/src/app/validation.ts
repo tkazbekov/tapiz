@@ -1,4 +1,8 @@
-import { StateActions, TuNode } from '@tapiz/board-commons';
+import {
+  normalizeVoteActions,
+  StateActions,
+  TuNode,
+} from '@tapiz/board-commons';
 import { Validators } from '@tapiz/board-commons/validators/index.js';
 
 import { PERSONAL_TOKEN_VALIDATOR } from '@tapiz/board-commons/validators/token.validator.js';
@@ -325,7 +329,7 @@ export const validation = async (
 
     if (actions.every((it): it is StateActions => !!it)) {
       // rich text is rendered as HTML by every client, so it is stored clean
-      return sanitizeStateActions(actions);
+      return sanitizeStateActions(normalizeVoteActions(actions, state, userId));
     }
   }
 

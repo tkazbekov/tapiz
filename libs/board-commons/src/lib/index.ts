@@ -29,4 +29,5 @@ export * from './models/auth-user.model.js';
 export * from './models/space.model.js';
 export * from './models/timer.model.js';
 export * from './state-tools.js';
+export * from './votes.js';
 export * from './board-common-actions.js';
