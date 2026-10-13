@@ -2,7 +2,7 @@
 
 ## Before You Start
 
-**Please open a [GitHub issue](https://github.com/juanfran/tapiz/issues) before writing any code**, regardless of the change type (bug fix, feature, refactor, docs, etc.). This avoids duplicate effort and lets us align on the approach before you invest time in implementation.
+**Please open a [GitHub issue](https://github.com/tkazbekov/tapiz/issues) before writing any code**, regardless of the change type (bug fix, feature, refactor, docs, etc.). This avoids duplicate effort and lets us align on the approach before you invest time in implementation.
 
 ## Development Setup
 

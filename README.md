@@ -2,7 +2,16 @@
 
 Tapiz is a **self-hosted**, web-based collaborative board built for teams to run smoother online meetings, brainstorming sessions, and project planning. Whether you're organizing agile workflows, running retrospectives, or brainstorming ideas, Tapiz provides all the tools you need to collaborate in real-time — **on your own infrastructure**.
 
-![Tapiz Demo](https://github.com/juanfran/tapiz/blob/main/resources/demo-tapiz-new.webp)
+> **This is a fork.** It is based on [juanfran/tapiz](https://github.com/juanfran/tapiz) and has been modified since October 2026. Changes from upstream include:
+>
+> - email and password accounts with guest access to boards shared by link (replacing Google sign-in)
+> - facilitation tools: a vote budget per user, hiding and revealing all notes, and admin-only board editing
+> - LLM board building over MCP: ready-made layouts, server-rendered previews and saved personal or team templates
+> - dependency upgrades across the stack
+>
+> Both projects are licensed under the [GNU AGPL v3](LICENSE.md).
+
+![Tapiz Demo](resources/demo-tapiz-new.webp)
 
 ## Key Features
 
@@ -17,7 +26,7 @@ Tapiz is a **self-hosted**, web-based collaborative board built for teams to run
 
 ## Live Demo
 
-Try out the [live demo here](https://tapiz.pages.dev/board/demo) to explore its features directly in your browser.
+Try out the upstream project's [live demo](https://tapiz.pages.dev/board/demo) to explore the core features in your browser. It does not include this fork's changes.
 
 For the best experience, including **teams**, **multiple boards** and **real-time collaboration**, consider installing the full app on your own server.
 
