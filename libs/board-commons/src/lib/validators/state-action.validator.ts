@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const stateAction = z.object({
   op: z.enum(['add', 'remove', 'patch']),
   data: z.object({
-    content: z.any(),
+    content: z.any().optional(),
     type: z.string().max(255),
   }),
   parent: z.string().optional(),

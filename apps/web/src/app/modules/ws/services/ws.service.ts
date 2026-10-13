@@ -107,17 +107,21 @@ export class WsService {
 
     this.#socket.on('error', (type: string) => {
       if (type === 'unauthorized') {
-        this.#notificationService.open({
-          message: 'Unauthorized',
-          action: 'Close',
-          type: 'error',
-        });
-
         const boardId = this.#boardId();
+        const isGuest = !!this.#user()?.isGuest;
+
+        // guests land on the join page, which explains what happened
+        if (!isGuest || !boardId) {
+          this.#notificationService.open({
+            message: 'Unauthorized',
+            action: 'Close',
+            type: 'error',
+          });
+        }
 
         if (!boardId) {
           void this.#router.navigate(['/']);
-        } else if (this.#user()?.isGuest) {
+        } else if (isGuest) {
           // shows that the board is no longer shared by link
           void this.#router.navigate(['/join', boardId], {
             queryParams: { returnUrl: this.#router.url },

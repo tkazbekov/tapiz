@@ -38,6 +38,9 @@ export class BubbleMenuView {
 
   private updateDebounceTimer: number | undefined;
 
+  // pending timers may fire after the editor view is destroyed
+  private destroyed = false;
+
   private nodeDom: HTMLElement | null = null;
 
   public shouldShow: Exclude<BubbleMenuPluginProps['shouldShow'], null> = ({
@@ -101,7 +104,11 @@ export class BubbleMenuView {
   };
 
   focusHandler = () => {
-    setTimeout(() => this.update(this.editor.view));
+    setTimeout(() => {
+      if (!this.destroyed) {
+        this.update(this.editor.view);
+      }
+    });
   };
 
   blurHandler = ({ event }: { event: FocusEvent }) => {
@@ -161,6 +168,10 @@ export class BubbleMenuView {
     docChanged: boolean,
     oldState?: EditorState,
   ) => {
+    if (this.destroyed) {
+      return;
+    }
+
     const { state, composing } = view;
     const { selection } = state;
 
@@ -222,6 +233,10 @@ export class BubbleMenuView {
     this.hidden();
 
     setTimeout(() => {
+      if (this.destroyed) {
+        return;
+      }
+
       const nodeDom = view.nodeDOM(pos)?.parentElement;
 
       if (nodeDom) {
@@ -284,6 +299,8 @@ export class BubbleMenuView {
   }
 
   destroy() {
+    this.destroyed = true;
+    clearTimeout(this.updateDebounceTimer);
     this.view.dom.removeEventListener('dragstart', this.dragstartHandler);
     this.editor.off('focus', this.focusHandler);
     this.editor.off('blur', this.blurHandler);

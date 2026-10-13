@@ -29,6 +29,7 @@ import {
 } from '@tapiz/board-commons';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { boardPageFeature } from '../reducers/boardPage.reducer';
+import { appFeature } from '../../../+state/app.reducer';
 import { NodesActions } from '../services/nodes-actions';
 import { ConfigService } from '../../../services/config.service';
 import {
@@ -263,6 +264,8 @@ export class BoardEffects {
               users: boardUsers,
             });
           }),
+          // access errors are handled by joinBoard$
+          catchError(() => EMPTY),
         );
       }),
     );
@@ -353,8 +356,18 @@ export class BoardEffects {
     () => {
       return this.actions$.pipe(
         ofType(BoardPageActions.boardNotFound),
-        tap(() => {
-          this.router.navigate(['/404']);
+        concatLatestFrom(() => [this.store.select(appFeature.selectUser)]),
+        tap(([{ id }, user]) => {
+          if (user?.isGuest) {
+            // the join page explains that the board isn't shared by link
+            void this.router.navigate(['/join', id], {
+              queryParams: { returnUrl: `/board/${id}` },
+            });
+
+            return;
+          }
+
+          void this.router.navigate(['/404']);
         }),
       );
     },

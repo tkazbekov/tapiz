@@ -53,17 +53,19 @@ export const unauthorized$ = createEffect(
     return actions$.pipe(
       ofType(AppActions.unauthorized),
       exhaustMap(() => {
+        // read before refreshing: other handlers may navigate away meanwhile
+        const url = router.url;
+
         // the session may have ended or only this resource may be forbidden
         return from(authService.refresh()).pipe(
           switchMap((user) => {
             if (!user) {
               // link-shared boards offer the guest join page again
-              return signedOutRedirect(router, authApiService, router.url);
+              return signedOutRedirect(router, authApiService, url);
             }
 
-            const segments = router.parseUrl(router.url).root.children[
-              'primary'
-            ]?.segments;
+            const segments =
+              router.parseUrl(url).root.children['primary']?.segments;
             const boardId =
               segments?.[0]?.path === 'board' ? segments[1]?.path : undefined;
 
@@ -72,12 +74,12 @@ export const unauthorized$ = createEffect(
             if (user.isGuest && boardId) {
               return of(
                 router.createUrlTree(['/join', boardId], {
-                  queryParams: { returnUrl: router.url },
+                  queryParams: { returnUrl: url },
                 }),
               );
             }
 
-            const onBoard = router.url.startsWith('/board');
+            const onBoard = url.startsWith('/board');
 
             return of(router.createUrlTree([onBoard ? '/404' : '/']));
           }),

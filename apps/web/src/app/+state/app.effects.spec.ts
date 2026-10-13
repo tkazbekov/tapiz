@@ -74,6 +74,34 @@ describe('unauthorized$', () => {
     );
   });
 
+  it('keeps the board url when another handler navigates during refresh', async () => {
+    refresh.mockImplementation(async () => {
+      // e.g. boardNotFound$ moving to /404 while the session refreshes
+      await router.navigateByUrl('/404');
+
+      return { ...user, isGuest: true, email: null };
+    });
+
+    await router.navigateByUrl('/board/board-1');
+
+    const navigateByUrl = vi.spyOn(router, 'navigateByUrl');
+    const subscription = TestBed.runInInjectionContext(() =>
+      unauthorized$(),
+    ).subscribe();
+
+    actions$.next(AppActions.unauthorized());
+
+    await vi.waitFor(() => {
+      expect(navigateByUrl).toHaveBeenCalledTimes(2);
+    });
+
+    subscription.unsubscribe();
+
+    expect(router.serializeUrl(navigateByUrl.mock.calls[1][0] as never)).toBe(
+      '/join/board-1?returnUrl=%2Fboard%2Fboard-1',
+    );
+  });
+
   it('sends an account refused on a board to 404', async () => {
     refresh.mockResolvedValue(user);
 

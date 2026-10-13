@@ -356,4 +356,29 @@ describe('validation node type', () => {
 
     consoleError.mockRestore();
   });
+
+  it('accepts removes, which carry no content', async () => {
+    const actions: StateActions[] = [
+      { op: 'remove', data: { id: 'text-1', type: 'text' } },
+      { op: 'remove', data: { id: 'note-1', type: 'note' } },
+    ];
+
+    await expect(
+      validation(
+        actions,
+        [
+          { id: 'text-1', type: 'text', content: { text: '<p>hi</p>' } },
+          {
+            id: 'note-1',
+            type: 'note',
+            content: { text: '', ownerId: 'user-1' },
+          },
+        ],
+        'user-1',
+        false,
+        'board-1',
+        'private-1',
+      ),
+    ).resolves.toMatchObject(actions);
+  });
 });
