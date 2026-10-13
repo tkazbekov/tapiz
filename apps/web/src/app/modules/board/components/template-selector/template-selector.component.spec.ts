@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { fromLegacyTemplate, parseBoardTemplate } from '@tapiz/board-commons';
+import { BUILTIN_TEMPLATES, parseBoardTemplate } from '@tapiz/board-commons';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TemplateSelectorComponent } from './template-selector.component';
 import { dispatchedAdds, provideInsertMocks } from './template-insert.testing';
@@ -34,21 +34,28 @@ describe('TemplateSelectorComponent', () => {
     TestBed.createComponent(TemplateSelectorComponent).componentInstance
       .elements;
 
-  it('has the four built-ins', () => {
-    expect(builtIns().map((it) => it.title)).toEqual([
+  it('has the four built-ins from board-commons, with previews', () => {
+    expect(builtIns().map((it) => it.name)).toEqual([
       'Stop, Start, Continue',
       'Sailboat',
       'Mad, Sad, Glad',
       'Starfish',
     ]);
+    expect(builtIns().map((it) => it.id)).toEqual(
+      BUILTIN_TEMPLATES.map((it) => it.id),
+    );
+    builtIns().forEach((it) => {
+      expect(it.image, it.name).toBe(`assets/templates/${it.slug}.webp`);
+      expect(it.width, it.name).toBeGreaterThan(0);
+      expect(it.height, it.name).toBeGreaterThan(0);
+    });
   });
 
   it('parses every built-in as template data', async () => {
-    for (const template of builtIns()) {
-      const nodes = (await template.load()).getTemplate();
-      const parsed = parseBoardTemplate(fromLegacyTemplate(nodes));
+    for (const template of BUILTIN_TEMPLATES) {
+      const parsed = parseBoardTemplate(await template.load());
 
-      expect(parsed.ok, template.title).toBe(true);
+      expect(parsed.ok, template.name).toBe(true);
     }
   });
 
@@ -60,7 +67,7 @@ describe('TemplateSelectorComponent', () => {
       const selected = vi.fn();
       fixture.componentInstance.selected.subscribe(selected);
 
-      const source = (await template.load()).getTemplate();
+      const source = (await template.load()).nodes;
 
       await fixture.componentInstance.create(template);
 
@@ -68,7 +75,7 @@ describe('TemplateSelectorComponent', () => {
       const panels = adds.filter((add) => add.data.type === 'panel');
       const positions = panels.map((add) => add.position ?? -1);
 
-      expect(dispatch, template.title).toHaveBeenCalledTimes(1);
+      expect(dispatch, template.name).toHaveBeenCalledTimes(1);
       expect(adds.map((add) => add.data.type)).toEqual(
         source.map((node) => node.type),
       );
@@ -81,9 +88,7 @@ describe('TemplateSelectorComponent', () => {
       );
       positions.forEach((position, index) => {
         if (index) {
-          expect(position, template.title).toBeGreaterThan(
-            positions[index - 1],
-          );
+          expect(position, template.name).toBeGreaterThan(positions[index - 1]);
         }
       });
       expect(selected).toHaveBeenCalledTimes(1);

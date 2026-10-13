@@ -5,24 +5,47 @@ import {
   output,
 } from '@angular/core';
 import { NgOptimizedImage } from '@angular/common';
-import { TuNode, fromLegacyTemplate } from '@tapiz/board-commons';
-import { TemplaNode } from './template-node.model';
+import { BUILTIN_TEMPLATES, type BuiltinTemplate } from '@tapiz/board-commons';
 import { TemplateInsertService } from './template-insert.service';
 import { SavedTemplatesComponent } from './saved-templates.component';
 
-interface Template {
-  title: string;
+interface Preview {
   image: string;
   width: number;
   height: number;
-  load: () => Promise<{ getTemplate: () => TuNode<TemplaNode>[] }>;
 }
+
+type Template = BuiltinTemplate & Preview;
+
+// previews stay in the web assets; the template data lives in board-commons
+const PREVIEWS: Record<string, Preview> = {
+  'stop-start-continue': {
+    image: 'assets/templates/stop-start-continue.webp',
+    width: 300,
+    height: 142,
+  },
+  sailboat: {
+    image: 'assets/templates/sailboat.webp',
+    width: 300,
+    height: 183,
+  },
+  'mad-sad-glad': {
+    image: 'assets/templates/mad-sad-glad.webp',
+    width: 300,
+    height: 204,
+  },
+  starfish: {
+    image: 'assets/templates/starfish.webp',
+    width: 300,
+    height: 244,
+  },
+};
 
 @Component({
   selector: 'tapiz-template-selector',
   imports: [NgOptimizedImage, SavedTemplatesComponent],
   template: `<div class="templates">
-      @for (template of elements; track template.title) {
+      @for (template of elements; track template.id) {
         <button
           class="template"
           type="button"
@@ -32,7 +55,7 @@ interface Template {
             [ngSrc]="template.image"
             [width]="template.width"
             [height]="template.height" />
-          <p>{{ template.title }}</p>
+          <p>{{ template.name }}</p>
         </button>
       }
     </div>
@@ -46,48 +69,14 @@ export class TemplateSelectorComponent {
   selected = output();
   busy = this.#templateInsert.busy;
 
-  elements: Template[] = [
-    {
-      title: 'Stop, Start, Continue',
-      image: 'assets/templates/stop-start-continue.webp',
-      width: 300,
-      height: 142,
-      load: () => {
-        return import('./templates/stop-start-continue');
-      },
-    },
-    {
-      title: 'Sailboat',
-      image: 'assets/templates/sailboat.webp',
-      width: 300,
-      height: 183,
-      load: () => {
-        return import('./templates/sailboat');
-      },
-    },
-    {
-      title: 'Mad, Sad, Glad',
-      image: 'assets/templates/mad-sad-glad.webp',
-      width: 300,
-      height: 204,
-      load: () => {
-        return import('./templates/mad-sad-glad');
-      },
-    },
-    {
-      title: 'Starfish',
-      image: 'assets/templates/starfish.webp',
-      width: 300,
-      height: 244,
-      load: () => {
-        return import('./templates/starfish');
-      },
-    },
-  ];
+  elements: Template[] = BUILTIN_TEMPLATES.map((template) => ({
+    ...template,
+    ...PREVIEWS[template.slug],
+  }));
 
   async create(template: Template) {
-    const inserted = await this.#templateInsert.insertFrom(async () =>
-      fromLegacyTemplate((await template.load()).getTemplate()),
+    const inserted = await this.#templateInsert.insertFrom(() =>
+      template.load(),
     );
 
     if (inserted) {
