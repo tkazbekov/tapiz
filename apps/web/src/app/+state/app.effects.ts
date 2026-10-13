@@ -64,6 +64,11 @@ export const unauthorized$ = createEffect(
               return signedOutRedirect(router, authApiService, url);
             }
 
+            // the ws join refusal can get there before the 401 does
+            if (url.startsWith('/404') || url.startsWith('/join/')) {
+              return EMPTY;
+            }
+
             const segments =
               router.parseUrl(url).root.children['primary']?.segments;
             const boardId =

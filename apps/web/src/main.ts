@@ -9,7 +9,12 @@ import {
 
 import { environment } from './environments/environment';
 import { AppComponent } from './app/app.component';
-import { provideRouter, withComponentInputBinding } from '@angular/router';
+import {
+  RouteReuseStrategy,
+  provideRouter,
+  withComponentInputBinding,
+} from '@angular/router';
+import { BoardRouteReuseStrategy } from './app/board-route-reuse.strategy';
 import { provideStore } from '@ngrx/store';
 import { provideRouterStore, routerReducer } from '@ngrx/router-store';
 import { bootstrapApplication } from '@angular/platform-browser';
@@ -66,6 +71,7 @@ bootstrapApplication(AppComponent, {
 
     provideHttpClient(withXhr(), withInterceptors([authInterceptor])),
     provideRouter(APP_ROUTES, withComponentInputBinding()),
+    { provide: RouteReuseStrategy, useClass: BoardRouteReuseStrategy },
     // load the session before the first navigation so guards see the user
     provideAppInitializer(() => inject(AuthService).bootstrap()),
     provideZonelessChangeDetection(),

@@ -102,6 +102,28 @@ describe('unauthorized$', () => {
     );
   });
 
+  it('stays on 404 when the ws refusal navigated there first', async () => {
+    refresh.mockResolvedValue(user);
+
+    await router.navigateByUrl('/404');
+
+    const navigateByUrl = vi.spyOn(router, 'navigateByUrl');
+    const subscription = TestBed.runInInjectionContext(() =>
+      unauthorized$(),
+    ).subscribe();
+
+    actions$.next(AppActions.unauthorized());
+
+    await vi.waitFor(() => {
+      expect(refresh).toHaveBeenCalled();
+    });
+    await Promise.resolve();
+
+    subscription.unsubscribe();
+
+    expect(navigateByUrl).not.toHaveBeenCalled();
+  });
+
   it('sends an account refused on a board to 404', async () => {
     refresh.mockResolvedValue(user);
 
