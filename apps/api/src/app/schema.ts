@@ -16,6 +16,7 @@ import {
 import { sql } from 'drizzle-orm';
 import type {
   BoardTemplateData,
+  TemplatePreviewRect,
   TuNode,
   UserSettings,
 } from '@tapiz/board-commons';
@@ -283,6 +284,9 @@ export const boardTemplates = pgTable(
     }),
     // the format version lives inside
     data: json('data').$type<BoardTemplateData>().notNull(),
+    // outline for list thumbnails, computed once on save (templates never
+    // change); null when the data could not be read
+    preview: json('preview').$type<TemplatePreviewRect[]>(),
     nodeCount: integer('node_count').notNull(),
     width: integer('width').notNull(),
     height: integer('height').notNull(),

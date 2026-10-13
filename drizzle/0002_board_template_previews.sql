@@ -1,0 +1,1 @@
+ALTER TABLE "board_templates" ADD COLUMN "preview" json;
