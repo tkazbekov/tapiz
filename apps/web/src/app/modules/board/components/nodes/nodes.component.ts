@@ -12,22 +12,21 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter, merge } from 'rxjs';
 import { HotkeysService } from '@tapiz/cdk/services/hostkeys.service';
 import { isInputField } from '@tapiz/cdk/utils/is-input-field';
-import { RxFor } from '@rx-angular/template/for';
 
 @Component({
   selector: 'tapiz-nodes',
   styleUrls: ['./nodes.component.scss'],
   template: `
-    <tapiz-node
-      *rxFor="let node of nodes(); trackBy: 'id'"
-      [node]="node" />
+    @for (node of nodes(); track node.id) {
+      <tapiz-node [node]="node" />
+    }
 
     @if (tmpNode(); as tmpNode) {
       <tapiz-node [node]="tmpNode" />
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NodeComponent, RxFor],
+  imports: [NodeComponent],
   providers: [HotkeysService],
 })
 export class NodesComponent {

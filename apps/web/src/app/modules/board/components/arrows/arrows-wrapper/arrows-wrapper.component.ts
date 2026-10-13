@@ -4,7 +4,6 @@ import {
   computed,
   inject,
 } from '@angular/core';
-import { RxFor } from '@rx-angular/template/for';
 import {
   ArrowNode,
   BoardTuNode,
@@ -20,9 +19,9 @@ type ArrowBoardNode = TuNode<ArrowNode, 'arrow'>;
 @Component({
   selector: 'tapiz-arrows-wrapper',
   template: `
-    <tapiz-node
-      *rxFor="let node of arrows(); trackBy: 'id'"
-      [node]="node" />
+    @for (node of arrows(); track node.id) {
+      <tapiz-node [node]="node" />
+    }
 
     @if (tmpArrow(); as tmp) {
       <tapiz-node [node]="tmp" />
@@ -30,7 +29,7 @@ type ArrowBoardNode = TuNode<ArrowNode, 'arrow'>;
   `,
   styleUrl: './arrows-wrapper.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NodeComponent, RxFor],
+  imports: [NodeComponent],
 })
 export class ArrowsWrapperComponent {
   #boardFacade = inject(BoardFacade);
