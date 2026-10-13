@@ -64,6 +64,16 @@ async function dbMigrate() {
 // Resolves once the migrations ran and the client is ready, retrying until
 // the database is reachable.
 export async function startDB() {
+  // tests seed users and delete boards, so keep them off real databases
+  if (
+    process.env['VITEST'] &&
+    !/_test$/.test(process.env['POSTGRES_DB'] ?? '')
+  ) {
+    throw new Error(
+      `Refusing to run DB tests against "${process.env['POSTGRES_DB']}"; set POSTGRES_DB to a database ending in _test`,
+    );
+  }
+
   for (;;) {
     try {
       await dbMigrate();
