@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { NodeValidator } from '../models/node.model.js';
+import { isNoteMaskedFor, isNotesHidden } from '../note-visibility.js';
 import {
   CommonBoardValidation,
   SizeValidator,
@@ -49,10 +50,24 @@ export const patchNote = note.partial();
 
 export const newNote = note;
 
+// while notes are hidden, others can only move or resize a note
+const MOVE_KEYS = new Set(['position', 'width', 'height', 'layer']);
+
 const NOTE_VALIDATOR: NodeValidator = {
-  add: async (data) => {
+  add: async (data, state) => {
     const validation = newNote.safeParse(data.content);
 
+    // ownership decides who sees a hidden note, so nobody adds notes for others
+    if (
+      validation.success &&
+      isNotesHidden(state.nodes) &&
+      validation.data.ownerId !== state.userId
+    ) {
+      return {
+        success: false,
+      };
+    }
+
     if (validation.success) {
       return {
         success: true,
@@ -78,9 +93,21 @@ const NOTE_VALIDATOR: NodeValidator = {
       },
     };
   },
-  patch: async (data) => {
+  patch: async (data, state) => {
     const validation = patchNote.safeParse(data.content);
 
+    if (
+      validation.success &&
+      isNoteMaskedFor(state.node, state.nodes, state.userId) &&
+      Object.entries(validation.data).some(
+        ([key, value]) => value !== undefined && !MOVE_KEYS.has(key),
+      )
+    ) {
+      return {
+        success: false,
+      };
+    }
+
     if (validation.success) {
       return {
         success: true,
@@ -106,7 +133,13 @@ const NOTE_VALIDATOR: NodeValidator = {
       },
     };
   },
-  remove: async (data) => {
+  remove: async (data, state) => {
+    if (isNoteMaskedFor(state.node, state.nodes, state.userId)) {
+      return {
+        success: false,
+      };
+    }
+
     return {
       success: true,
       data,

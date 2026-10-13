@@ -597,3 +597,174 @@ describe('validateAction group', () => {
     ).resolves.toBe(false);
   });
 });
+
+describe('validateAction hidden notes', () => {
+  const noteContent = (ownerId: string) => ({
+    text: '<p>secret</p>',
+    position: { x: 0, y: 0 },
+    layer: 0,
+    ownerId,
+    votes: [],
+    emojis: [],
+    drawing: [],
+    width: 300,
+    height: 300,
+    color: '#fee2e2',
+  });
+  const nodes: TuNode[] = [
+    { id: 'settings', type: 'settings', content: { notesHidden: true } },
+    {
+      id: 'note-1',
+      type: 'note',
+      content: noteContent('user-1'),
+      children: [
+        {
+          id: 'comment-1',
+          type: 'comment',
+          content: { text: 'mine', userId: 'user-2', date: 1 },
+        },
+      ],
+    },
+    { id: 'note-2', type: 'note', content: noteContent('user-2') },
+  ];
+
+  // user-2 owns note-2 and wrote comment-1 on note-1
+  const run = (action: StateActions, isAdmin = false, board = nodes) =>
+    validateAction(action, board, 'user-2', isAdmin, 'board-1', 'private-1');
+
+  const patch = (id: string, content: object): StateActions => ({
+    op: 'patch',
+    data: { id, type: 'note', content },
+  });
+
+  it('lets others move and resize a hidden note', async () => {
+    await expect(
+      run(
+        patch('note-1', {
+          position: { x: 10, y: 10 },
+          width: 400,
+          height: 200,
+          layer: 0,
+        }),
+      ),
+    ).resolves.toMatchObject({ op: 'patch' });
+  });
+
+  it.each([
+    { text: '<p>edited</p>' },
+    { votes: [{ userId: 'user-2', vote: 1 }] },
+    { color: '#ffffff' },
+    { emojis: [] },
+    { drawing: [] },
+    { textHidden: false },
+    { ownerId: 'user-2' },
+    { position: { x: 1, y: 1 }, text: 'sneaky' },
+  ])('rejects others changing %o of a hidden note', async (content) => {
+    await expect(run(patch('note-1', content))).resolves.toBe(false);
+    await expect(run(patch('note-1', content), true)).resolves.toBe(false);
+  });
+
+  it('lets the owner edit and vote while notes are hidden', async () => {
+    await expect(
+      run(
+        patch('note-2', {
+          text: '<p>mine</p>',
+          votes: [{ userId: 'user-2', vote: 1 }],
+        }),
+      ),
+    ).resolves.toMatchObject({ op: 'patch' });
+  });
+
+  it('rejects others removing a hidden note, admins included', async () => {
+    const remove = (id: string): StateActions => ({
+      op: 'remove',
+      data: { id, type: 'note' },
+    });
+
+    await expect(run(remove('note-1'))).resolves.toBe(false);
+    await expect(run(remove('note-1'), true)).resolves.toBe(false);
+    await expect(run(remove('note-2'))).resolves.toMatchObject({
+      op: 'remove',
+    });
+  });
+
+  it('only adds notes owned by the sender', async () => {
+    const add = (ownerId: string): StateActions => ({
+      op: 'add',
+      data: { id: 'note-3', type: 'note', content: noteContent(ownerId) },
+    });
+
+    await expect(run(add('user-1'))).resolves.toBe(false);
+    await expect(run(add('user-1'), true)).resolves.toBe(false);
+    await expect(run(add('user-2'))).resolves.toMatchObject({ op: 'add' });
+  });
+
+  it('rejects comments on hidden notes of other users', async () => {
+    await expect(
+      run({
+        op: 'add',
+        parent: 'note-1',
+        data: {
+          id: 'comment-2',
+          type: 'comment',
+          content: { text: 'hi', userId: 'user-2', date: 1 },
+        },
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      run({
+        op: 'patch',
+        parent: 'note-1',
+        data: { id: 'comment-1', type: 'comment', content: { text: 'x' } },
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      run({
+        op: 'remove',
+        parent: 'note-1',
+        data: { id: 'comment-1', type: 'comment' },
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      run({
+        op: 'add',
+        parent: 'note-2',
+        data: {
+          id: 'comment-3',
+          type: 'comment',
+          content: { text: 'hi', userId: 'user-2', date: 1 },
+        },
+      }),
+    ).resolves.toMatchObject({ op: 'add' });
+  });
+
+  it('allows everything once notes are revealed', async () => {
+    const revealed = nodes.map((node) =>
+      node.type === 'settings'
+        ? { ...node, content: { notesHidden: false } }
+        : node,
+    );
+
+    await expect(
+      run(patch('note-1', { text: '<p>edited</p>' }), false, revealed),
+    ).resolves.toMatchObject({ op: 'patch' });
+    await expect(
+      run(
+        { op: 'remove', data: { id: 'note-1', type: 'note' } },
+        false,
+        revealed,
+      ),
+    ).resolves.toMatchObject({ op: 'remove' });
+    await expect(
+      run(
+        {
+          op: 'patch',
+          parent: 'note-1',
+          data: { id: 'comment-1', type: 'comment', content: { text: 'x' } },
+        },
+        false,
+        revealed,
+      ),
+    ).resolves.toMatchObject({ op: 'patch' });
+  });
+});

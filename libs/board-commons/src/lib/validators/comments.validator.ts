@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { NodeValidator } from '../models/node.model.js';
+import type { NodeValidator, TuNode } from '../models/node.model.js';
+import { isNoteMaskedFor } from '../note-visibility.js';
 
 const comment = z.object({
   text: z.string(),
@@ -9,9 +10,18 @@ const comment = z.object({
 
 const commentPatch = comment.pick({ text: true }).partial();
 
+// the comments of a hidden note are as secret as its text
+const onHiddenNote = (state: {
+  nodes: TuNode[];
+  userId: string;
+  parentNode?: TuNode;
+}) =>
+  !!state.parentNode &&
+  isNoteMaskedFor(state.parentNode, state.nodes, state.userId);
+
 const COMMENT_VALIDATOR: NodeValidator = {
   add: async (data, state) => {
-    if (state.parentNode?.type !== 'note') {
+    if (state.parentNode?.type !== 'note' || onHiddenNote(state)) {
       return {
         success: false,
       };
@@ -48,6 +58,7 @@ const COMMENT_VALIDATOR: NodeValidator = {
   // only the author edits a comment, and only its text
   patch: async (data, state) => {
     if (
+      onHiddenNote(state) ||
       !('userId' in state.node.content) ||
       state.node.content.userId !== state.userId
     ) {
@@ -83,8 +94,9 @@ const COMMENT_VALIDATOR: NodeValidator = {
   },
   remove: async (data, state) => {
     if (
-      'userId' in state.node.content &&
-      state.node.content.userId !== state.userId
+      onHiddenNote(state) ||
+      ('userId' in state.node.content &&
+        state.node.content.userId !== state.userId)
     ) {
       return {
         success: false,

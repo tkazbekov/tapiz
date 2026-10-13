@@ -22,6 +22,7 @@ describe('SETTINGS_VALIDATOR', () => {
       anonymousMode: false,
       hideNoteAuthor: false,
       allowPublicPosts: false,
+      notesHidden: false,
     });
   });
 
@@ -57,6 +58,33 @@ describe('SETTINGS_VALIDATOR', () => {
 
     expect(result.success && result.data.content).toEqual({
       votesPerUser: 3,
+    });
+  });
+
+  it('rejects hidden notes together with anonymous mode', async () => {
+    const added = await SETTINGS_VALIDATOR.add(
+      settingsNode({ anonymousMode: true, notesHidden: true }),
+      state,
+    );
+    const hidden = await SETTINGS_VALIDATOR.patch(
+      settingsNode({ notesHidden: true }),
+      { ...state, node: settingsNode({ anonymousMode: true }) },
+    );
+    const anonymous = await SETTINGS_VALIDATOR.patch(
+      settingsNode({ anonymousMode: true }),
+      { ...state, node: settingsNode({ notesHidden: true }) },
+    );
+    const switched = await SETTINGS_VALIDATOR.patch(
+      settingsNode({ anonymousMode: false, notesHidden: true }),
+      { ...state, node: settingsNode({ anonymousMode: true }) },
+    );
+
+    expect(added.success).toBe(false);
+    expect(hidden.success).toBe(false);
+    expect(anonymous.success).toBe(false);
+    expect(switched.success && switched.data.content).toEqual({
+      anonymousMode: false,
+      notesHidden: true,
     });
   });
 

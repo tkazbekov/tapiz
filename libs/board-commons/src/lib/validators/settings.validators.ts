@@ -9,6 +9,8 @@ const settingsBase = z.object({
   anonymousMode: z.boolean(),
   hideNoteAuthor: z.boolean(),
   allowPublicPosts: z.boolean(),
+  // other users' notes show as blank cards until an admin reveals them
+  notesHidden: z.boolean(),
   // votes each user can spend on the board; null or 0 is unlimited
   votesPerUser: z.number().int().min(0).max(999).nullable().optional(),
   backgroundColor: z.string().refine(colorValidator).optional(),
@@ -27,7 +29,14 @@ export const settingsValidator = settingsBase.extend({
   anonymousMode: z.boolean().default(false),
   hideNoteAuthor: z.boolean().default(false),
   allowPublicPosts: z.boolean().default(false),
+  notesHidden: z.boolean().default(false),
 });
+
+// anonymous notes have no owner, so nobody could see or edit them while hidden
+const hidesAnonymousNotes = (settings: {
+  anonymousMode?: boolean;
+  notesHidden?: boolean;
+}) => !!settings.anonymousMode && !!settings.notesHidden;
 
 export const SETTINGS_VALIDATOR: NodeValidator = {
   add: async (data, state) => {
@@ -46,6 +55,12 @@ export const SETTINGS_VALIDATOR: NodeValidator = {
     }
 
     const validation = settingsValidator.safeParse(data.content);
+
+    if (validation.success && hidesAnonymousNotes(validation.data)) {
+      return {
+        success: false,
+      };
+    }
 
     if (validation.success) {
       return {
@@ -78,6 +93,15 @@ export const SETTINGS_VALIDATOR: NodeValidator = {
     }
 
     const validation = settingsBase.partial().safeParse(data.content);
+
+    if (
+      validation.success &&
+      hidesAnonymousNotes({ ...state.node.content, ...validation.data })
+    ) {
+      return {
+        success: false,
+      };
+    }
 
     if (validation.success) {
       return {
