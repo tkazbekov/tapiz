@@ -32,3 +32,4 @@ export * from './state-tools.js';
 export * from './votes.js';
 export * from './note-visibility.js';
 export * from './board-common-actions.js';
+export * from './layout/index.js';
