@@ -241,20 +241,19 @@ describe('permissions', () => {
       expect(result.ctx.board.id).toEqual(boardId);
     });
 
-    it('board admin lost team access', async () => {
+    // board admins keep their boards after leaving the team (haveAccess)
+    it('board admin keeps access after leaving the team', async () => {
       const user = getAuth(2);
 
       const caller = createCaller(createTestContext(user));
 
       await db.team.deleteMember(teamId, user.sub);
 
-      const result = await errorCall(async () => {
-        return caller.boardMember({
-          boardId,
-        });
+      const result = await caller.boardMember({
+        boardId,
       });
 
-      expect(result?.code).toEqual('UNAUTHORIZED');
+      expect(result.ctx.board.id).toEqual(boardId);
     });
   });
 
