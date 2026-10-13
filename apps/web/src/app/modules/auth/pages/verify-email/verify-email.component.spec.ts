@@ -1,6 +1,7 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
+import { Router } from '@angular/router';
 import { Store } from '@ngrx/store';
 import { AuthUserModel, defaultUserSettings } from '@tapiz/board-commons';
 import { of, throwError } from 'rxjs';
@@ -22,9 +23,16 @@ describe('VerifyEmailComponent', () => {
   const user = signal<AuthUserModel | null>(null);
   let verifyEmail: ReturnType<typeof vi.fn>;
   let setUser: ReturnType<typeof vi.fn>;
+  let navigate: ReturnType<typeof vi.fn>;
+  const pendingKey = 'tapiz.verifyEmailToken';
+
+  const rejectWith = (status: number, error: string) =>
+    throwError(() => new HttpErrorResponse({ status, error: { error } }));
 
   beforeEach(() => {
-    user.set(null);
+    user.set(account);
+    sessionStorage.clear();
+    navigate = vi.fn(() => Promise.resolve(true));
     verifyEmail = vi.fn(() =>
       of({ user: { ...account, emailVerified: true } }),
     );
@@ -36,12 +44,14 @@ describe('VerifyEmailComponent', () => {
         { provide: Store, useValue: { selectSignal: () => user } },
         { provide: AuthApiService, useValue: { verifyEmail } },
         { provide: AuthService, useValue: { setUser } },
+        { provide: Router, useValue: { navigate } },
       ],
     });
   });
 
   afterEach(() => {
     history.replaceState(null, '', '/');
+    sessionStorage.clear();
   });
 
   function create() {
@@ -63,24 +73,49 @@ describe('VerifyEmailComponent', () => {
     expect(location.pathname).toBe('/verify-email');
     expect(verifyEmail).toHaveBeenCalledWith({ token: 'abc' });
     expect(component.state()).toBe('verified');
-  });
-
-  it('updates the signed-in user when it is the verified account', () => {
-    history.replaceState(null, '', '/verify-email#token=abc');
-    user.set(account);
-
-    create();
-
     expect(setUser).toHaveBeenCalledWith({ ...account, emailVerified: true });
+    expect(sessionStorage.getItem(pendingKey)).toBeNull();
   });
 
-  it('leaves another signed-in user alone', () => {
+  for (const [who, signedIn] of [
+    ['signed out visitors', null],
+    ['guests', { ...account, isGuest: true, email: null }],
+  ] as const) {
+    it(`sends ${who} to sign in, keeping the token out of the url`, () => {
+      history.replaceState(null, '', '/verify-email#token=abc');
+      user.set(signedIn);
+
+      create();
+
+      expect(verifyEmail).not.toHaveBeenCalled();
+      expect(location.hash).toBe('');
+      expect(navigate).toHaveBeenCalledWith(['/login'], {
+        queryParams: { returnUrl: '/verify-email' },
+      });
+      expect(sessionStorage.getItem(pendingKey)).toBe('abc');
+    });
+  }
+
+  it('verifies the kept token after signing in, then forgets it', () => {
+    history.replaceState(null, '', '/verify-email');
+    sessionStorage.setItem(pendingKey, 'abc');
+
+    const component = create();
+
+    expect(verifyEmail).toHaveBeenCalledWith({ token: 'abc' });
+    expect(component.state()).toBe('verified');
+    expect(sessionStorage.getItem(pendingKey)).toBeNull();
+  });
+
+  it('keeps the token when signed in to another account', () => {
     history.replaceState(null, '', '/verify-email#token=abc');
-    user.set({ ...account, id: 'user-2' });
+    verifyEmail.mockReturnValueOnce(rejectWith(401, 'LOGIN_REQUIRED'));
 
-    create();
+    const component = create();
 
+    expect(component.state()).toBe('wrong-account');
     expect(setUser).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(pendingKey)).toBe('abc');
   });
 
   it('shows an invalid link without calling the API when there is no token', () => {
@@ -89,25 +124,20 @@ describe('VerifyEmailComponent', () => {
     const component = create();
 
     expect(verifyEmail).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
     expect(component.state()).toBe('invalid');
   });
 
   it('offers a new link to unverified accounts when the token expired', () => {
     history.replaceState(null, '', '/verify-email#token=abc');
-    user.set(account);
     verifyEmail.mockReturnValueOnce(
-      throwError(
-        () =>
-          new HttpErrorResponse({
-            status: 400,
-            error: { error: 'INVALID_OR_EXPIRED_TOKEN' },
-          }),
-      ),
+      rejectWith(400, 'INVALID_OR_EXPIRED_TOKEN'),
     );
 
     const component = create();
 
     expect(component.state()).toBe('invalid');
     expect(component.canResend()).toBe(true);
+    expect(sessionStorage.getItem(pendingKey)).toBeNull();
   });
 });

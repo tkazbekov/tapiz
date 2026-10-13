@@ -193,8 +193,8 @@ export const boardRouter = router({
         teamId: z.uuid().optional(),
         spaceId: z.uuid().optional(),
         starred: z.boolean().optional(),
-        offset: z.number().int().optional().default(0),
-        limit: z.number().int().optional().default(10),
+        offset: z.number().int().min(0).optional().default(0),
+        limit: z.number().int().min(1).max(100).optional().default(10),
         sortBy: z
           .enum([
             '-createdAt',
@@ -343,8 +343,14 @@ export const boardRouter = router({
       const mentionedUser = await db.user.getUser(req.input.userId);
       const board = await db.board.getBoardBasic(req.input.boardId);
 
-      // guests are notified in the app only
-      if (mentionedUser?.email && !mentionedUser.isGuest && board) {
+      // guests are notified in the app only, and so are accounts that never
+      // proved they own their address
+      if (
+        mentionedUser?.email &&
+        mentionedUser.emailVerifiedAt &&
+        !mentionedUser.isGuest &&
+        board
+      ) {
         void sendMentionNotificationEmail(
           mentionedUser.email,
           board.id,

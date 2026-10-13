@@ -10,7 +10,7 @@ import {
   fastifyTRPCPlugin,
   FastifyTRPCPluginOptions,
 } from '@trpc/server/adapters/fastify';
-import { Server } from './server.js';
+import { Server, attachBoardSockets } from './server.js';
 import { setServer } from './global.js';
 import { authRoutes } from './routers/auth-routes.js';
 import { registerCsrfHook } from './auth/csrf.js';
@@ -22,7 +22,7 @@ import { registerAgentSessionRoute } from './agent-auth.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
 import { mentionRateLimitKey } from './rate-limited.js';
 import db from './db/index.js';
-import { DrizzleQueryError } from 'drizzle-orm';
+import { internalErrorHandler, logError } from './log-error.js';
 import {
   createWsAllowRequest,
   getFrontendOrigin,
@@ -52,21 +52,7 @@ const fastify = Fastify({
   },
 });
 
-// drizzle's error message includes the SQL and its params (hashes, board
-// state); reply with the driver's message instead.
-fastify.setErrorHandler((error, _request, reply) => {
-  if (error instanceof DrizzleQueryError) {
-    console.error(error);
-
-    return reply.code(500).send({
-      statusCode: 500,
-      error: 'Internal Server Error',
-      message: error.cause?.message ?? 'Internal Server Error',
-    });
-  }
-
-  throw error;
-});
+fastify.setErrorHandler(internalErrorHandler);
 
 // No connectionStateRecovery: recovered sockets would skip re-validation;
 // the web client re-joins its board on reconnect instead.
@@ -141,7 +127,7 @@ fastify.register(fastifyTRPCPlugin, {
       });
     },
     onError({ path, error }) {
-      console.error(`Error in tRPC handler on path '${path}':`, error);
+      logError(error, `Error in tRPC handler on path '${path}':`);
     },
   } satisfies FastifyTRPCPluginOptions<AppRouter>['trpcOptions'],
 });
@@ -166,26 +152,16 @@ fastify.register(async function (fastify) {
       setServer(server);
     }
 
-    const boardServer = server;
-
-    fastify.io.on('connection', (socket) => {
-      void boardServer
-        .connection(
-          socket,
-          fastify.parseCookie(socket.request.headers.cookie ?? ''),
-        )
-        .catch((e) => {
-          console.error(e);
-          socket.disconnect(true);
-        });
-    });
+    attachBoardSockets(fastify.io, server, (header) =>
+      fastify.parseCookie(header),
+    );
   });
 
   // expired sessions lose their open sockets too
   const sessionGc = setInterval(() => {
     void deleteExpiredSessions()
       .then((ids) => server?.disconnectSessions(ids, 'session_expired'))
-      .catch((e) => console.error(e));
+      .catch((e) => logError(e));
   }, 3600e3);
 
   sessionGc.unref();

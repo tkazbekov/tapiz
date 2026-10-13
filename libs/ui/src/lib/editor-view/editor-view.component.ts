@@ -31,6 +31,7 @@ import { PopupComponent } from '../popup/popup.component';
 import { normalize } from '@tapiz/utils/normalize';
 import { explicitEffect } from 'ngxtension/explicit-effect';
 import { defaultNoteFontFamily } from '@tapiz/board-commons';
+import { sanitizeRichText } from '@tapiz/cdk/utils/sanitize-rich-text';
 
 @Component({
   selector: 'tapiz-editor-view',
@@ -140,7 +141,8 @@ export class EditorViewComponent implements OnDestroy, AfterViewInit {
 
   initEditor(content: string) {
     const node = document.createElement('div');
-    node.innerHTML = content;
+    // a detached element still loads images, so handlers would run
+    node.innerHTML = sanitizeRichText(content);
 
     node.querySelectorAll('br').forEach((br) => {
       if (!br.nextSibling && !br.previousSibling) {

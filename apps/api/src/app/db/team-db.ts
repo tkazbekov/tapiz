@@ -2,7 +2,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from './init-db.js';
 import * as schema from '../schema.js';
 import {
-  Board,
+  SpaceBoard,
   TeamInvitation,
   TeamMember,
   UserTeam,
@@ -245,21 +245,16 @@ export async function deleteSpaceBoards(spaceId: string) {
     .where(eq(schema.spaceToBoards.spaceId, spaceId));
 }
 
-export async function getSpaceBoards(spaceId: string): Promise<Board[]> {
-  const boards = await db
-    .select()
+// Only what a space lists, never the board content.
+export async function getSpaceBoards(spaceId: string): Promise<SpaceBoard[]> {
+  return db
+    .select({ id: schema.boards.id, name: schema.boards.name })
     .from(schema.spaceToBoards)
-    .where(eq(schema.spaceToBoards.spaceId, spaceId))
-    .leftJoin(
+    .innerJoin(
       schema.boards,
       eq(schema.spaceToBoards.boardId, schema.boards.id),
-    );
-
-  return boards
-    .filter((it): it is SetNonNullable<typeof it> => !!it.boards)
-    .map((it) => {
-      return it.boards;
-    });
+    )
+    .where(eq(schema.spaceToBoards.spaceId, spaceId));
 }
 
 export async function getSpace(spaceId: string) {

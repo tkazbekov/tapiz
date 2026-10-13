@@ -96,6 +96,15 @@ export class WsService {
       this.#checkSession();
     });
 
+    // The server checks the session in the handshake. A refused handshake
+    // ('unauthenticated', 'server_error') leaves the socket inactive, socket.io
+    // does not retry it; network errors keep it active and retrying.
+    this.#socket.on('connect_error', () => {
+      if (!this.#socket.active) {
+        this.#checkSession();
+      }
+    });
+
     this.#socket.on('error', (type: string) => {
       if (type === 'unauthorized') {
         this.#notificationService.open({

@@ -1,6 +1,8 @@
 import type { FastifyRequest } from 'fastify';
 import { vi } from 'vitest';
-import { startDB } from '../app/db/init-db';
+import { db as drizzleDb, startDB } from '../app/db/init-db';
+import { accounts } from '../app/schema';
+import { eq } from 'drizzle-orm';
 import db from '../app/db';
 import {
   createGuest,
@@ -421,6 +423,23 @@ describe('board', () => {
       expect(boards.length).toEqual(2);
     });
 
+    it('rejects negative offsets and out of range limits', async () => {
+      const caller = await getUserCaller(30);
+
+      for (const input of [
+        { offset: -1 },
+        { limit: 0 },
+        { limit: 101 },
+        { limit: 1.5 },
+      ]) {
+        const result = await errorCall(() => caller.board.boards(input));
+
+        expect(result?.code).toEqual('BAD_REQUEST');
+      }
+
+      expect(await caller.board.boards({ limit: 100 })).toHaveLength(5);
+    });
+
     it('get boards sorted by name', async () => {
       const callerUser1 = await getUserCaller(20);
 
@@ -712,6 +731,41 @@ describe('board', () => {
       const notifications = await db.user.getUserNotifications(getAuth(91).sub);
 
       expect(notifications.length).toEqual(1);
+    });
+
+    it('emails verified addresses only', async () => {
+      const caller = await getUserCaller(90);
+      const board = await caller.board.create({ name: 'mention emails' });
+      const verified = getAuth(98);
+      const unverified = getAuth(99);
+
+      await db.board.joinBoard(verified.sub, board.id);
+      await db.board.joinBoard(unverified.sub, board.id);
+      await drizzleDb
+        .update(accounts)
+        .set({ emailVerifiedAt: null })
+        .where(eq(accounts.id, unverified.sub));
+      mentionEmail.mockClear();
+
+      for (const user of [verified, unverified]) {
+        await caller.board.mentionBoardUser({
+          boardId: board.id,
+          userId: user.sub,
+        });
+      }
+
+      // both are notified in the app
+      expect(await db.user.getUserNotifications(unverified.sub)).toHaveLength(
+        1,
+      );
+      expect(mentionEmail).toHaveBeenCalledTimes(1);
+      expect(mentionEmail).toHaveBeenCalledWith(
+        verified.email,
+        board.id,
+        'mention emails',
+        getAuth(90).name,
+        undefined,
+      );
     });
 
     it('notifies a member of the board team', async () => {

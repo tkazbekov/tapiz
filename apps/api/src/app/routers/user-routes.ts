@@ -117,7 +117,13 @@ export const userRouter = router({
       const createdAt = await db.user.updateUserApiToken(
         req.ctx.user.sub,
         hashApiToken(token),
+        req.ctx.user.sessionId,
       );
+
+      // the session ended (logout, password reset) while this ran
+      if (!createdAt) {
+        throw new TRPCError({ code: 'UNAUTHORIZED' });
+      }
 
       return {
         token,
@@ -201,7 +207,7 @@ export const userRouter = router({
       };
     }),
   notifications: participantProcedure
-    .input(z.object({ offset: z.number().int().optional().default(0) }))
+    .input(z.object({ offset: z.number().int().min(0).optional().default(0) }))
     .query(async (req) => {
       const notifications = await db.user.getUserNotifications(
         req.ctx.user.sub,

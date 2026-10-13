@@ -14,6 +14,42 @@ import { syncNodeBox } from '@tapiz/sync-node-box';
 import { Subscription, throttleTime } from 'rxjs';
 import { getAuthConfig } from './auth/config.js';
 import { validateSessionToken } from './auth/session.js';
+import { logError } from './log-error.js';
+
+// Sessions are checked in the handshake middleware, so `connection` only
+// fires for authenticated sockets. A rejected handshake reaches the browser
+// as a `connect_error` with the reason as its message, and socket.io does not
+// retry it on its own.
+export function attachBoardSockets(
+  io: WsServer,
+  server: Server,
+  parseCookie: (header: string) => Record<string, string>,
+) {
+  const cookiesOf = (socket: Socket) =>
+    parseCookie(socket.request.headers.cookie ?? '');
+
+  io.use((socket, next) => {
+    server.authenticate(cookiesOf(socket)).then(
+      (identity) => {
+        if (!identity) {
+          next(new Error('unauthenticated'));
+          return;
+        }
+
+        socket.data.identity = identity;
+        next();
+      },
+      (e) => {
+        logError(e);
+        next(new Error('server_error'));
+      },
+    );
+  });
+
+  io.on('connection', (socket) => {
+    server.connection(socket, cookiesOf(socket));
+  });
+}
 
 export class Server {
   public clients: Client[] = [];
@@ -25,42 +61,61 @@ export class Server {
 
   constructor(public io: WsServer) {}
 
-  // Sockets authenticate once, on connect, and never slide the session: they
-  // can't update the cookie.
-  public async connection(socket: Socket, cookies: Record<string, string>) {
-    const token = cookies[getAuthConfig().cookieName];
-    const session = await validateSessionToken(token, { slide: false });
+  // Sockets authenticate once, in the handshake (see attachBoardSockets), and
+  // never slide the session: they can't update the cookie.
+  public async authenticate(
+    cookies: Record<string, string>,
+  ): Promise<ClientIdentity | null> {
+    const session = await validateSessionToken(
+      cookies[getAuthConfig().cookieName],
+      { slide: false },
+    );
 
     if (!session) {
-      socket.emit('auth_error', 'unauthenticated');
-      socket.disconnect(true);
-      return;
+      return null;
     }
 
-    // the socket may have gone away while the session was validated
-    if (!socket.connected) {
-      return;
-    }
-
-    const client = new Client(socket, this, {
+    return {
       id: session.account.id,
       name: session.account.name,
       isGuest: session.account.isGuest,
       sessionId: session.sessionId,
-    });
+    };
+  }
+
+  // Synchronous up to the client's listeners, so events the browser sends
+  // right after connecting are handled.
+  public connection(socket: Socket, cookies: Record<string, string>) {
+    const identity: ClientIdentity | undefined = socket.data.identity;
+
+    if (!identity) {
+      socket.disconnect(true);
+      return;
+    }
+
+    const client = new Client(socket, this, identity);
 
     this.clients.push(client);
     // per-user room so user events reach every tab
-    socket.join(`user:${session.account.id}`);
+    socket.join(`user:${identity.id}`);
 
     socket.on('disconnect', () => {
       this.clientClose(client);
     });
 
-    // a logout while the session was validated could not see this client yet
-    if (!(await validateSessionToken(token, { slide: false }))) {
-      this.disconnectClients([client], 'session_ended');
-    }
+    // a logout after the handshake check could not see this client yet
+    void validateSessionToken(cookies[getAuthConfig().cookieName], {
+      slide: false,
+    })
+      .then((session) => {
+        if (!session) {
+          this.disconnectClients([client], 'session_ended');
+        }
+      })
+      .catch((e) => {
+        logError(e);
+        this.disconnectClients([client], 'session_ended');
+      });
   }
 
   private disconnectClients(clients: Client[], reason: string) {
@@ -222,7 +277,8 @@ export class Server {
         .sync()
         .pipe(throttleTime(2000))
         .subscribe((state) => {
-          db.board.updateBoard(boardId, state).catch((e) => console.error(e));
+          // the error carries the whole board as a query param
+          db.board.updateBoard(boardId, state).catch((e) => logError(e));
         });
     }
   }
@@ -250,7 +306,7 @@ export class Server {
       const flush: Promise<void> = db.board
         .updateBoard(boardId, this.state[boardId].get())
         .then(() => undefined)
-        .catch((e) => console.error(e))
+        .catch((e) => logError(e))
         .finally(() => {
           if (this.pendingFlush[boardId] === flush) {
             delete this.pendingFlush[boardId];

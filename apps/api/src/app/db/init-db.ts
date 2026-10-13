@@ -1,6 +1,7 @@
 import { drizzle, PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import { logError } from '../log-error.js';
 
 export let db: PostgresJsDatabase;
 export let psqlClient: postgres.Sql;
@@ -60,16 +61,18 @@ async function dbMigrate() {
   await runMigrations(getConnection(), migrationsFolder);
 }
 
+// Resolves once the migrations ran and the client is ready, retrying until
+// the database is reachable.
 export async function startDB() {
-  const run = async () => {
+  for (;;) {
     try {
       await dbMigrate();
       initDbClient();
-    } catch (e) {
-      console.log('Error connecting to DB, retrying in 2 seconds', e);
-      setTimeout(run, 2000);
-    }
-  };
 
-  await run();
+      return;
+    } catch (e) {
+      logError(e, 'Error connecting to DB, retrying in 2 seconds');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
 }

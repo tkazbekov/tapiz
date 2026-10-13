@@ -17,6 +17,7 @@ import { Client } from './client.js';
 import type { Server } from './server.js';
 import db from './db/index.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
+import { logError } from './log-error.js';
 
 type McpUser = {
   id: string;
@@ -155,7 +156,7 @@ export function hideQueryDetails<Args extends unknown[], Result>(
       return await handler(...args);
     } catch (e) {
       if (e instanceof DrizzleQueryError) {
-        console.error(e);
+        logError(e);
 
         throw new Error(e.cause?.message ?? 'Database error');
       }

@@ -1,5 +1,6 @@
 import { randProductName } from '@ngneat/falso';
 import { startDB } from '../app/db/init-db';
+import db from '../app/db';
 
 import {
   errorCall,
@@ -55,6 +56,17 @@ describe('Api - teams', () => {
       const result = await caller.team.getAll();
 
       expect(result).toHaveLength(0);
+    });
+
+    // a non-uuid used to reach the database and fail there with a 500
+    it('answers a team id that is not a uuid with not found', async () => {
+      const caller = await getUserCaller(1);
+
+      const result = await errorCall(() => {
+        return caller.team.members({ teamId: "zz'SECRETPARAM" });
+      });
+
+      expect(result?.code).toEqual('NOT_FOUND');
     });
   });
 
@@ -431,6 +443,66 @@ describe('Api - teams', () => {
       });
 
       expect(result?.code).toEqual('BAD_REQUEST');
+    });
+
+    it('never puts another team or account board in a space', async () => {
+      const victim = await getUserCaller(2);
+      const attacker = await getUserCaller(3);
+      const privateBoard = await victim.board.create({
+        name: 'victim private board',
+      });
+      const team = await attacker.team.new({ name: randProductName() });
+      const space = await attacker.team.createSpace({
+        teamId: team.id,
+        name: randProductName(),
+      });
+
+      const result = await errorCall(() => {
+        return attacker.team.updateSpace({
+          spaceId: space.id,
+          name: space.name,
+          boards: [privateBoard.id],
+        });
+      });
+
+      expect(result?.code).toEqual('BAD_REQUEST');
+      expect(await db.team.getSpaceBoards(space.id)).toEqual([]);
+    });
+
+    it('lists only the id and name of space boards', async () => {
+      const caller = await getUserCaller(1);
+      const space = await caller.team.createSpace({
+        teamId,
+        name: randProductName(),
+      });
+
+      const result = await caller.team.updateSpace({
+        spaceId: space.id,
+        name: space.name,
+        boards: [boardId],
+      });
+
+      expect(result.boards).toEqual([{ id: boardId, name: 'test' }]);
+
+      const spaces = await caller.team.spaces({ teamId });
+
+      expect(spaces.find((it) => it.id === space.id)?.boards).toEqual([
+        { id: boardId, name: 'test' },
+      ]);
+    });
+
+    it('drops a board from the spaces of the team it leaves', async () => {
+      const caller = await getUserCaller(1);
+      const board = await caller.board.create({ name: 'moving', teamId });
+      const space = await caller.team.createSpace({
+        teamId,
+        name: randProductName(),
+        boards: [board.id],
+      });
+
+      await caller.board.transferBoard({ boardId: board.id });
+
+      expect(await db.team.getSpaceBoards(space.id)).toEqual([]);
     });
   });
 });

@@ -8,6 +8,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatIconModule } from '@angular/material/icon';
 import { Editor } from '@tiptap/core';
+import { normalizeLinkUrl } from '@tapiz/board-commons/rich-text/rich-text-link';
 import { ToolbarEditorService } from '../../toolbar-editor.service';
 
 @Component({
@@ -92,8 +93,11 @@ export class OptionFormatComponent {
       return;
     }
 
+    // the sanitizer drops hrefs without an allowed scheme
+    const href = normalizeLinkUrl(url);
+
     // unset link
-    if (url === '') {
+    if (!href) {
       this.useLink();
 
       return;
@@ -104,7 +108,7 @@ export class OptionFormatComponent {
       .chain()
       .focus()
       .extendMarkRange('link')
-      .setLink({ href: url })
+      .setLink({ href })
       .run();
   }
 

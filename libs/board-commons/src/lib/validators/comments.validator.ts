@@ -7,6 +7,8 @@ const comment = z.object({
   date: z.number(),
 });
 
+const commentPatch = comment.pick({ text: true }).partial();
+
 const COMMENT_VALIDATOR: NodeValidator = {
   add: async (data, state) => {
     if (state.parentNode?.type !== 'note') {
@@ -43,10 +45,20 @@ const COMMENT_VALIDATOR: NodeValidator = {
       },
     };
   },
+  // only the author edits a comment, and only its text
   patch: async (data, state) => {
-    const validation = comment.partial().safeParse(data.content);
+    if (
+      !('userId' in state.node.content) ||
+      state.node.content.userId !== state.userId
+    ) {
+      return {
+        success: false,
+      };
+    }
 
-    if (validation.success && validation.data.userId !== state.userId) {
+    const validation = commentPatch.safeParse(data.content);
+
+    if (validation.success) {
       return {
         success: true,
         data: {
@@ -58,17 +70,15 @@ const COMMENT_VALIDATOR: NodeValidator = {
 
     return {
       success: false,
-      error: validation.success
-        ? undefined
-        : {
-            issues: validation.error.issues.map((err) => ({
-              path: err.path.filter(
-                (p): p is string | number => typeof p !== 'symbol',
-              ),
-              message: err.message,
-              code: err.code,
-            })),
-          },
+      error: {
+        issues: validation.error.issues.map((err) => ({
+          path: err.path.filter(
+            (p): p is string | number => typeof p !== 'symbol',
+          ),
+          message: err.message,
+          code: err.code,
+        })),
+      },
     };
   },
   remove: async (data, state) => {

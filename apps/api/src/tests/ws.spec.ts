@@ -14,7 +14,7 @@ import { getBoardUser } from '../app/db/board-db';
 import { Server } from '../app/server';
 import { sendUserEvent } from '../app/subscriptor';
 import { revokeBoardAccess } from '../app/global';
-import { isUserNode } from '@tapiz/board-commons';
+import { isUserNode, type TuNode } from '@tapiz/board-commons';
 import db from '../app/db';
 import { addTeamMember } from '../app/db/user-db';
 import { io } from 'socket.io-client';
@@ -42,7 +42,7 @@ describe('ws', () => {
 
   const rooms = () => wsServer.io.of('/').adapter.rooms;
 
-  // messages sent before the session is validated are not handled yet
+  // the client is registered before the handshake completes
   const connect = async (cookie: string) => {
     const ws = await initWs(port, { cookie });
 
@@ -68,7 +68,7 @@ describe('ws', () => {
   beforeAll(async () => {
     await startDB();
     await createMultipleUsers();
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await createGuest(i);
     }
     wsServer = await initTestServer(port);
@@ -432,15 +432,61 @@ describe('ws', () => {
     return { ws, errors };
   };
 
-  it('disconnects sockets without a valid session', async () => {
+  it('refuses handshakes without a valid session', async () => {
     for (const cookie of ['', 'tapiz_session=nope', 'tapiz_session=g19']) {
-      const { ws, errors } = authErrorsOf(cookie);
+      const { ws } = authErrorsOf(cookie);
+      const connectErrors: string[] = [];
+
+      ws.on('connect_error', (err) => connectErrors.push(err.message));
 
       await vi.waitFor(() => {
-        expect(errors).toEqual(['unauthenticated']);
-        expect(ws.connected).toEqual(false);
+        expect(connectErrors).toEqual(['unauthenticated']);
       });
 
+      expect(ws.connected).toEqual(false);
+      // socket.io does not retry a refused handshake by itself
+      expect(ws.active).toEqual(false);
+
+      ws.close();
+    }
+  });
+
+  it('answers a join sent as soon as the socket connects', async () => {
+    const owner = await getUserCaller(20);
+    const board = await owner.board.create({ name: 'early join' });
+    await owner.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const ws = io(`ws://localhost:${port}`, {
+      transports: ['websocket'],
+      parser: customParser,
+      reconnection: false,
+      extraHeaders: { Cookie: 'tapiz_session=21' },
+    });
+    const received: unknown[] = [];
+
+    ws.on('board', (msgs: unknown[]) => received.push(...msgs));
+    ws.on('connect', () => {
+      ws.emit('correlationId', 'early-correlation');
+      ws.emit('board', { action: 'join', boardId: board.id });
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          rooms()
+            .get(board.id)
+            ?.has(ws.id ?? ''),
+        ).toEqual(true);
+        expect(received.length).toBeGreaterThan(0);
+      });
+
+      expect(
+        wsServer.clients.find((client) => client.socket.id === ws.id),
+      ).toMatchObject({
+        boardId: board.id,
+        correlationId: 'early-correlation',
+      });
+    } finally {
       ws.close();
     }
   });
@@ -676,5 +722,77 @@ describe('ws', () => {
     ).toMatchObject({ name: 'Signed Up', isGuest: false });
 
     guest.close();
+  });
+
+  it('stores guest rich text without script handlers', async () => {
+    const caller = await getUserCaller(20);
+    const board = await caller.board.create({ name: 'xss' });
+    await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const guest = await connect('tapiz_session=g4');
+
+    await sendFrom(guest, { action: 'join', boardId: board.id });
+
+    const client = wsServer.clients.find((it) => it.socket.id === guest.id);
+
+    await vi.waitFor(() => {
+      expect(client?.boardId).toEqual(board.id);
+    });
+
+    const textId = randomUUID();
+
+    await sendFrom(guest, [
+      {
+        op: 'add',
+        data: {
+          type: 'text',
+          id: textId,
+          content: {
+            text: '<img src=x onerror="alert(document.domain)"><p>hi</p>',
+            position: { x: 0, y: 0 },
+            width: 200,
+            height: 100,
+            color: '#000000',
+            size: 16,
+            layer: 0,
+            rotation: 0,
+          },
+        },
+      },
+    ]);
+
+    const findText = (nodes: TuNode[] | undefined) =>
+      nodes?.find((it) => it.id === textId)?.content as
+        { text: string } | undefined;
+
+    await vi.waitFor(() => {
+      expect(findText(wsServer.getBoard(board.id))?.text).toEqual('<p>hi</p>');
+    });
+
+    // validators and the sanitizer follow the claimed type, so a patch
+    // that names another type is dropped
+    await sendFrom(
+      guest,
+      ['comment', 'token'].map((type) => ({
+        op: 'patch',
+        data: {
+          type,
+          id: textId,
+          content: { text: '<img src=x onerror="alert(document.domain)">' },
+        },
+      })),
+    );
+
+    expect(findText(wsServer.getBoard(board.id))?.text).toEqual('<p>hi</p>');
+
+    // the last client leaving writes the board to the database
+    guest.close();
+
+    await vi.waitFor(async () => {
+      const stored = await db.board.getBoard(board.id);
+
+      expect(findText(stored?.board)?.text).toEqual('<p>hi</p>');
+      expect(JSON.stringify(stored?.board)).not.toContain('onerror');
+    });
   });
 });

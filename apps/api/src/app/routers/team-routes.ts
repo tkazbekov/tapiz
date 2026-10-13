@@ -18,6 +18,21 @@ import {
 import { Space } from '@tapiz/board-commons';
 import { sendInvitationEmail } from '../mailer.js';
 
+// A space only lists boards of its own team: getSpaceBoards reads them
+// without any other access check.
+async function assertTeamBoards(teamId: string, boards: string[]) {
+  if (!boards.length) {
+    return;
+  }
+
+  const teamBoards = await db.board.getBoardsByTeam(teamId);
+  const boardIds = teamBoards.map((board) => board.id);
+
+  if (!boards.every((boardId) => boardIds.includes(boardId))) {
+    throw new TRPCError({ code: 'BAD_REQUEST' });
+  }
+}
+
 export const teamRouter = router({
   new: protectedProcedure
     .input(z.object({ name: z.string().min(1).max(255) }))
@@ -331,15 +346,7 @@ export const teamRouter = router({
       }),
     )
     .mutation(async (req): Promise<Space> => {
-      const teamBoards = await db.board.getBoardsByTeam(req.input.teamId);
-      const boardIds = teamBoards.map((board) => board.id);
-      const validBoards = req.input.boards.every((boardId) =>
-        boardIds.includes(boardId),
-      );
-
-      if (!validBoards) {
-        throw new TRPCError({ code: 'BAD_REQUEST' });
-      }
+      await assertTeamBoards(req.input.teamId, req.input.boards);
 
       const space = await createSpace(req.input.teamId, req.input.name);
 
@@ -395,6 +402,8 @@ export const teamRouter = router({
       if (!userTeam) {
         throw new TRPCError({ code: 'UNAUTHORIZED' });
       }
+
+      await assertTeamBoards(space.teamId, req.input.boards);
 
       await db.team.renameSpace(req.input.spaceId, req.input.name);
 

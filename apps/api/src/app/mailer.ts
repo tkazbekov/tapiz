@@ -84,9 +84,11 @@ export function sendPasswordResetEmail(to: string, link: string) {
   return sendMail(to, subject, text);
 }
 
-export function sendVerificationEmail(to: string, link: string) {
+// Names the account that registered the address: the link only works while
+// signed in to it, and an owner who didn't sign up as that name can tell.
+export function sendVerificationEmail(to: string, link: string, name: string) {
   const subject = 'Tapiz - Verify your email';
-  const text = `<a href="${escapeHtml(link)}">Verify your email</a> to receive team invitations on Tapiz. The link expires in 24 hours. If you didn't create an account, ignore this email.`;
+  const text = `A Tapiz account named ${escapeHtml(name)} was created with this address. <a href="${escapeHtml(link)}">Verify your email</a> while signed in to it to receive team invitations. The link expires in 24 hours. If you didn't create this account, ignore this email.`;
 
   return sendMail(to, subject, text);
 }

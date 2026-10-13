@@ -16,6 +16,8 @@ RUN pnpm nx run api:build:production
 
 FROM node:24-slim
 
+# only the runtime stage: the build stage needs its devDependencies
+ENV NODE_ENV=production
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable

@@ -184,6 +184,41 @@ describe('WsService', () => {
     expect(router.navigateByUrl).not.toHaveBeenCalled();
   });
 
+  it('checks the session when the server refuses the handshake', async () => {
+    refresh.mockResolvedValue(null);
+    socket.active = false;
+
+    await trigger('connect_error', new Error('unauthenticated'));
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(router.navigateByUrl).toHaveBeenCalledWith({
+      commands: ['/join', 'board-1'],
+      extras: { queryParams: { returnUrl: '/board/board-1?nodeId=n1' } },
+    });
+  });
+
+  it('reconnects after a refused handshake when the session is valid', async () => {
+    refresh.mockResolvedValue(guest);
+    socket.active = false;
+
+    await trigger('connect_error', new Error('server_error'));
+
+    expect(socket.connect).toHaveBeenCalledOnce();
+    expect(router.navigateByUrl).not.toHaveBeenCalled();
+  });
+
+  it('leaves retrying connection errors to socket.io', async () => {
+    socket.active = true;
+
+    try {
+      await trigger('connect_error', new Error('websocket error'));
+    } finally {
+      socket.active = false;
+    }
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it('ignores disconnects started by the client', () => {
     socket.handlers.get('disconnect')?.('io client disconnect');
 

@@ -9,6 +9,7 @@ import { SETTINGS_VALIDATOR } from '@tapiz/board-commons/validators/settings.val
 import { TIMER_VALIDATORS } from '@tapiz/board-commons/validators/timer.validators.js';
 
 import { NOTE_VALIDATORS } from '@tapiz/board-commons/validators/note.validator.js';
+import { sanitizeStateActions } from './rich-text.js';
 
 const validations = {
   custom: {
@@ -75,6 +76,11 @@ export const validateAction = async (
     }
   };
 
+  // validators and the rich-text sanitizer pick their rules from the claimed
+  // type, so a patch or remove must name the type of the node it targets
+  const matchesType = (node: TuNode | undefined): node is TuNode =>
+    !!node && node.type === msg.data.type;
+
   let parentNode: TuNode | undefined;
 
   if (msg.parent) {
@@ -113,7 +119,7 @@ export const validateAction = async (
     } else if (msg.op === 'patch') {
       const node = findNode(msg.data.id, msg.parent);
 
-      if (!node) {
+      if (!matchesType(node)) {
         return false;
       }
 
@@ -148,7 +154,7 @@ export const validateAction = async (
     } else if (msg.op === 'remove') {
       const node = findNode(msg.data.id, msg.parent);
 
-      if (!node) {
+      if (!matchesType(node)) {
         return false;
       }
 
@@ -188,7 +194,7 @@ export const validateAction = async (
       // check if the element present in the state
       const node = nodes.find((it) => it.id === msg.data.id);
 
-      if (!node) {
+      if (!matchesType(node)) {
         return false;
       }
 
@@ -304,7 +310,8 @@ export const validation = async (
     );
 
     if (actions.every((it): it is StateActions => !!it)) {
-      return actions;
+      // rich text is rendered as HTML by every client, so it is stored clean
+      return sanitizeStateActions(actions);
     }
   }
 

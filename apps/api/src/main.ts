@@ -2,5 +2,6 @@ import './env-vars.js';
 import { startApiServer } from './app/init-server.js';
 import { startDB } from './app/db/init-db.js';
 
-startDB();
+// no requests before the migrations ran and the db client exists
+await startDB();
 startApiServer();

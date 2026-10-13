@@ -3,16 +3,18 @@ import type { AppContext } from './app.context.js';
 import type { Principal } from './auth/principal.js';
 import db from './db/index.js';
 import { z } from 'zod';
-import { DrizzleQueryError } from 'drizzle-orm';
 
 const t = initTRPC.context<AppContext>().create({
-  // drizzle's error message includes the SQL and its params (hashes, board
-  // state); clients get the driver's message instead.
+  // never send stacks, whatever NODE_ENV says: they carry file paths and,
+  // for drizzle errors, the SQL and its params
+  isDev: false,
+  // Unexpected errors are logged by onError and answered generically: their
+  // message may be internal (drizzle's includes the SQL and its params).
   errorFormatter({ shape, error }) {
-    if (error.cause instanceof DrizzleQueryError) {
+    if (error.code === 'INTERNAL_SERVER_ERROR' && error.cause) {
       return {
         ...shape,
-        message: error.cause.cause?.message ?? 'Internal server error',
+        message: 'Internal server error',
       };
     }
 
@@ -25,7 +27,7 @@ export const publicProcedure = t.procedure;
 export const middleware = t.middleware;
 export const createCallerFactory = t.createCallerFactory;
 
-const teamIdInput = z.object({ teamId: z.string().min(1) });
+const teamIdInput = z.object({ teamId: z.uuid() });
 
 export type AccountPrincipal = Principal & { isGuest: false; email: string };
 

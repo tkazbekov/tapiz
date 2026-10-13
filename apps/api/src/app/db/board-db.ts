@@ -479,11 +479,18 @@ export async function removeStarredBoard(userId: string, boardId: string) {
     );
 }
 
+// Spaces belong to a team, so the board leaves every space it was in.
 export async function transferBoard(boardId: string, teamId: string | null) {
-  return db
-    .update(schema.boards)
-    .set({ teamId })
-    .where(eq(schema.boards.id, boardId));
+  return db.transaction(async (tx) => {
+    await tx
+      .delete(schema.spaceToBoards)
+      .where(eq(schema.spaceToBoards.boardId, boardId));
+
+    await tx
+      .update(schema.boards)
+      .set({ teamId })
+      .where(eq(schema.boards.id, boardId));
+  });
 }
 
 export async function addFileToBoard(boardId: string, name: string) {

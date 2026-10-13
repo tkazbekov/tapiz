@@ -28,6 +28,7 @@ import {
   setSessionCookie,
 } from '../auth/session.js';
 import { sendPasswordResetEmail, sendVerificationEmail } from '../mailer.js';
+import { logError } from '../log-error.js';
 
 type Account = NonNullable<Awaited<ReturnType<typeof db.user.getUser>>>;
 
@@ -90,10 +91,6 @@ export function toAuthUser(account: Account): AuthUserModel {
   };
 }
 
-function logError(e: unknown) {
-  console.error(e);
-}
-
 function emailKey(req: FastifyRequest) {
   const email = (req.body as { email?: unknown } | undefined)?.email;
 
@@ -128,11 +125,9 @@ async function deliverLink(
   kind: 'password reset' | 'email verification',
   to: string,
   link: string,
+  send: () => Promise<boolean>,
 ) {
-  const send =
-    kind === 'password reset' ? sendPasswordResetEmail : sendVerificationEmail;
-
-  if (await send(to, link)) {
+  if (await send()) {
     return;
   }
 
@@ -159,10 +154,12 @@ async function startEmailVerification(account: Account) {
     VERIFY_TTL_MS,
   );
 
-  void deliverLink(
-    'email verification',
-    account.email,
-    `${getAuthConfig().frontendUrl}/verify-email#token=${token}`,
+  const email = account.email;
+  const link = `${getAuthConfig().frontendUrl}/verify-email#token=${token}`;
+
+  void deliverLink('email verification', email, link, () =>
+    // names who registered, so the owner of a borrowed address can tell
+    sendVerificationEmail(email, link, account.name),
   ).catch(logError);
 }
 
@@ -176,11 +173,12 @@ async function sendPasswordReset(email: string) {
   const token = generateToken();
 
   await db.user.setPasswordReset(account.id, hashToken(token), RESET_TTL_MS);
+  const to = account.email;
   // the token is in the fragment so it never reaches server logs or Referer
-  await deliverLink(
-    'password reset',
-    account.email,
-    `${getAuthConfig().frontendUrl}/reset-password#token=${token}`,
+  const link = `${getAuthConfig().frontendUrl}/reset-password#token=${token}`;
+
+  await deliverLink('password reset', to, link, () =>
+    sendPasswordResetEmail(to, link),
   );
 }
 
@@ -474,12 +472,10 @@ export async function authRoutes(fastify: FastifyInstance) {
           return sendError(reply, 400, 'INVALID_CREDENTIALS');
         }
 
-        await db.user.setPassword(
+        const oldSessionIds = await db.user.setPassword(
           account.id,
           await hashPassword(body.data.newPassword),
         );
-
-        const oldSessionIds = await deleteAccountSessions(account.id);
 
         await startSession(reply, account.id);
         getServer()?.disconnectSessions(oldSessionIds, 'password_changed');
@@ -526,17 +522,20 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const accountId = await db.user.consumePasswordReset(
+        const reset = await db.user.consumePasswordReset(
           hashToken(body.data.token),
           await hashPassword(body.data.password),
         );
 
-        if (!accountId) {
+        if (!reset) {
           return sendError(reply, 400, 'INVALID_OR_EXPIRED_TOKEN');
         }
 
+        const { accountId } = reset;
+
+        // the account's sessions are gone with the reset; this browser may be
+        // signed in as someone else
         await endCurrentSession(req, 'session_ended');
-        await deleteAccountSessions(accountId);
         getServer()?.disconnectAccount(accountId, 'password_reset');
 
         await startSession(reply, accountId);
@@ -550,7 +549,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // No session needed: the link may be opened in another browser.
+  // Needs a browser session of the account the link was sent for: anyone can
+  // register someone else's address, and the owner's click must not verify
+  // it for them. Without one the link is left unused (401 LOGIN_REQUIRED).
   fastify.post(
     '/api/auth/verify-email',
     { config: { rateLimit: { max: 20, timeWindow: '15 minutes' } } },
@@ -561,10 +562,26 @@ export async function authRoutes(fastify: FastifyInstance) {
         return sendError(reply, 400, 'INVALID_OR_EXPIRED_TOKEN');
       }
 
+      const principal = req.principal;
+
+      if (!principal || principal.isGuest || principal.via !== 'session') {
+        return sendError(reply, 401, 'LOGIN_REQUIRED');
+      }
+
+      const verifyHash = hashToken(body.data.token);
       const accountId = await db.user.consumeEmailVerification(
-        hashToken(body.data.token),
+        verifyHash,
+        principal.sub,
       );
-      const account = accountId ? await db.user.getUser(accountId) : undefined;
+
+      if (!accountId) {
+        // signed in as another account than the one the link is for
+        return (await db.user.isEmailVerificationPending(verifyHash))
+          ? sendError(reply, 401, 'LOGIN_REQUIRED')
+          : sendError(reply, 400, 'INVALID_OR_EXPIRED_TOKEN');
+      }
+
+      const account = await db.user.getUser(accountId);
 
       if (!account) {
         return sendError(reply, 400, 'INVALID_OR_EXPIRED_TOKEN');

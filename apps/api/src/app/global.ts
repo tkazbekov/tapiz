@@ -1,5 +1,6 @@
 import { type Server } from './server.js';
 import db from './db/index.js';
+import { logError } from './log-error.js';
 
 let server: Server | null = null;
 
@@ -9,10 +10,6 @@ export function setServer(s: Server) {
 
 export function getServer() {
   return server;
-}
-
-function logError(e: unknown) {
-  console.error(e);
 }
 
 // Clients on the board plus sockets in its state room or subscribed to its

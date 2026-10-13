@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { vi } from 'vitest';
 import { db as drizzleDb, startDB } from '../app/db/init-db';
 import db from '../app/db';
-import { accounts } from '../app/schema';
+import { accounts, sessions } from '../app/schema';
 import { appRouter } from '../app/routers';
 import { createCallerFactory } from '../app/trpc';
 import { toPrincipal } from '../app/auth/principal';
@@ -32,8 +32,8 @@ vi.mock('../app/mailer', async (importOriginal) => {
       mail.reset(to, link);
       return true;
     },
-    sendVerificationEmail: async (to: string, link: string) => {
-      mail.verify(to, link);
+    sendVerificationEmail: async (to: string, link: string, name: string) => {
+      mail.verify(to, link, name);
       return true;
     },
   };
@@ -233,6 +233,7 @@ describe('auth routes', () => {
       expect(mail.verify).toHaveBeenCalledWith(
         email,
         expect.stringContaining('/verify-email#token='),
+        'Ana',
       );
       expect(cookie).not.toEqual(guestSession.token);
       expect(await currentUser(guestSession.token)).toBeNull();
@@ -479,7 +480,11 @@ describe('auth routes', () => {
 
     it('resets once, signs in, verifies the email and revokes credentials', async () => {
       const { email, cookie, user } = await register();
-      await db.user.updateUserApiToken(user.id, hashApiToken('tapiz_pat_x'));
+      await db.user.updateUserApiToken(
+        user.id,
+        hashApiToken('tapiz_pat_x'),
+        null,
+      );
 
       await requestReset(email);
       const token = await resetToken(email);
@@ -525,12 +530,87 @@ describe('auth routes', () => {
       expect((await confirm(token)).statusCode).toEqual(400);
       expect((await login(email)).statusCode).toEqual(200);
     });
+
+    // An API token minted on an old session takes that session's row lock
+    // first; the reset deletes the sessions before it clears the token, so
+    // it waits for the mint and clears its token too.
+    it('clears a token minted on an old session while the reset runs', async () => {
+      const { email, user } = await register();
+      const session = await createSession(user.id, false);
+
+      await requestReset(email);
+      const token = await resetToken(email);
+
+      let release = () => undefined as void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let locked = () => undefined as void;
+      const sessionLocked = new Promise<void>((resolve) => (locked = resolve));
+
+      const minting = drizzleDb.transaction(async (tx) => {
+        await tx
+          .select({ id: sessions.id })
+          .from(sessions)
+          .where(eq(sessions.id, session.sessionId))
+          .for('share');
+        locked();
+        await released;
+        await tx
+          .update(accounts)
+          .set({ apiTokenHash: hashApiToken(`tapiz_pat_${randomUUID()}`) })
+          .where(eq(accounts.id, user.id));
+      });
+
+      await sessionLocked;
+      const reset = confirm(token);
+      // let the reset reach the locked session row
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      await minting;
+
+      expect((await reset).statusCode).toEqual(200);
+      expect(await db.user.getUserApiTokenInfo(user.id)).toMatchObject({
+        hasToken: false,
+      });
+      expect(await currentUser(session.token)).toBeNull();
+    });
+
+    it('mints no token for a session that is gone', async () => {
+      const { user } = await register();
+      const session = await createSession(user.id, false);
+
+      await db.session.deleteSession(session.sessionId);
+
+      expect(
+        await db.user.updateUserApiToken(
+          user.id,
+          hashApiToken(`tapiz_pat_${randomUUID()}`),
+          session.sessionId,
+        ),
+      ).toBeUndefined();
+      expect(await db.user.getUserApiTokenInfo(user.id)).toMatchObject({
+        hasToken: false,
+      });
+
+      const live = await createSession(user.id, false);
+
+      expect(
+        await db.user.updateUserApiToken(
+          user.id,
+          hashApiToken(`tapiz_pat_${randomUUID()}`),
+          live.sessionId,
+        ),
+      ).toEqual(expect.any(String));
+    });
   });
 
   describe('email verification', () => {
     const verifyToken = async (email: string) => {
       await vi.waitFor(() => {
-        expect(mail.verify).toHaveBeenCalledWith(email, expect.any(String));
+        expect(mail.verify).toHaveBeenCalledWith(
+          email,
+          expect.any(String),
+          'Ana',
+        );
       });
 
       const calls = mail.verify.mock.calls.filter(([to]) => to === email);
@@ -541,11 +621,11 @@ describe('auth routes', () => {
       return tokenFrom(link);
     };
 
-    const verify = (token: string) =>
-      post('/api/auth/verify-email', { token }, { ip: nextIp() });
+    const verify = (token: string, cookie?: string) =>
+      post('/api/auth/verify-email', { token }, { cookie, ip: nextIp() });
 
     it('gates email invitations until the address is verified', async () => {
-      const { email, user } = await register();
+      const { email, user, cookie } = await register();
       const token = await verifyToken(email);
 
       const admin = await getUserCaller(1);
@@ -575,14 +655,14 @@ describe('auth routes', () => {
           .catch((e) => e.code),
       ).toEqual('NOT_FOUND');
 
-      const response = await verify(token);
+      const response = await verify(token, cookie);
 
       expect(response.statusCode).toEqual(200);
       expect(response.json().user).toMatchObject({
         id: user.id,
         emailVerified: true,
       });
-      expect((await verify(token)).statusCode).toEqual(400);
+      expect((await verify(token, cookie)).statusCode).toEqual(400);
 
       const verified = await callerFor();
 
@@ -614,8 +694,8 @@ describe('auth routes', () => {
 
       expect(second).not.toEqual(first);
       // the new link replaces the old one
-      expect((await verify(first)).statusCode).toEqual(400);
-      expect((await verify(second)).statusCode).toEqual(200);
+      expect((await verify(first, cookie)).statusCode).toEqual(400);
+      expect((await verify(second, cookie)).statusCode).toEqual(200);
       expect((await resend()).statusCode).toEqual(204);
 
       expect(
@@ -625,7 +705,7 @@ describe('auth routes', () => {
     });
 
     it('rejects expired links', async () => {
-      const { email, user } = await register();
+      const { email, user, cookie } = await register();
       const token = await verifyToken(email);
 
       await drizzleDb
@@ -633,14 +713,69 @@ describe('auth routes', () => {
         .set({ emailVerifyExpiresAt: sql`now() - interval '1 second'` })
         .where(eq(accounts.id, user.id));
 
-      expect((await verify(token)).statusCode).toEqual(400);
+      expect((await verify(token, cookie)).statusCode).toEqual(400);
+    });
+
+    // someone registers the victim's address, the victim clicks the link
+    it('only verifies from a session of the account the link is for', async () => {
+      const { email, user, cookie } = await register();
+      const token = await verifyToken(email);
+      const other = await register();
+      const loginRequired = { error: 'LOGIN_REQUIRED' };
+
+      const anonymous = await verify(token);
+      const otherAccount = await verify(token, other.cookie);
+
+      expect(anonymous.statusCode).toEqual(401);
+      expect(anonymous.json()).toEqual(loginRequired);
+      expect(otherAccount.statusCode).toEqual(401);
+      expect(otherAccount.json()).toEqual(loginRequired);
+      expect((await currentUser(other.cookie))?.emailVerified).toEqual(false);
+
+      // API tokens can't use it either
+      const apiToken = `tapiz_pat_${randomUUID()}`;
+
+      await db.user.updateUserApiToken(user.id, hashApiToken(apiToken), null);
+      expect(
+        (
+          await post(
+            '/api/auth/verify-email',
+            { token },
+            {
+              ip: nextIp(),
+              headers: { authorization: `Bearer ${apiToken}` },
+            },
+          )
+        ).statusCode,
+      ).toEqual(401);
+
+      // nothing was consumed
+      const response = await verify(token, cookie);
+
+      expect(response.statusCode).toEqual(200);
+      expect(response.json().user).toMatchObject({
+        id: user.id,
+        emailVerified: true,
+      });
+    });
+
+    it('answers invalid links as invalid when signed in', async () => {
+      const { cookie } = await register();
+
+      expect((await verify('x'.repeat(43), cookie)).json()).toEqual({
+        error: 'INVALID_OR_EXPIRED_TOKEN',
+      });
     });
   });
 
   it('changes the password and ends the other sessions', async () => {
     const { email, cookie, user } = await register();
     const other = sessionCookie(await login(email))?.value ?? '';
-    await db.user.updateUserApiToken(user.id, hashApiToken('tapiz_pat_y'));
+    await db.user.updateUserApiToken(
+      user.id,
+      hashApiToken('tapiz_pat_y'),
+      null,
+    );
 
     const change = (currentPassword: string) =>
       post(

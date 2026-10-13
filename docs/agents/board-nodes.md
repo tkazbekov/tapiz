@@ -10,6 +10,7 @@ When a node content field is created or changed:
 - Register or adjust API validation in `apps/api` so add/patch actions persist.
 - Update the Angular component that renders or edits the node.
 - Add focused tests for shared validation and behavior.
+- Rich-text (HTML) fields are sanitized with one DOMPurify allowlist shared by both runtimes (`libs/board-commons/src/lib/rich-text/rich-text-sanitizer.ts`). The API sanitizes every validated ws/MCP action in `apps/api/src/app/validation.ts`, and the web sanitizes again on render through the `safeHtml` pipe or `sanitizeRichText` from `@tapiz/cdk/utils/sanitize-rich-text`. A new HTML field must be added to `sanitizeContent`. Never bind user HTML to `innerHTML` without one of these. If the editor gains new tags, attributes or styles, extend the allowlist.
 
 For a basic node creation checklist, see [docs/create-node.md](../create-node.md).
 

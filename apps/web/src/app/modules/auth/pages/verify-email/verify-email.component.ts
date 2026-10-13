@@ -7,7 +7,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { Store } from '@ngrx/store';
 import { appFeature } from '../../../../+state/app.reducer';
@@ -17,7 +17,38 @@ import { AuthLayoutComponent } from '../../components/auth-layout/auth-layout.co
 import { authErrorCode, authErrorMessage } from '../../auth-errors';
 import { takeHashToken } from '../../hash-token';
 
-type VerifyState = 'verifying' | 'verified' | 'invalid' | 'error';
+type VerifyState =
+  'verifying' | 'verified' | 'wrong-account' | 'invalid' | 'error';
+
+// The link only works signed in to the account it was sent for. Its token
+// waits here (this tab only, never in a URL) while the visitor signs in.
+const pendingTokenKey = 'tapiz.verifyEmailToken';
+const returnUrl = '/verify-email';
+
+function readPendingToken(): string | null {
+  try {
+    return sessionStorage.getItem(pendingTokenKey);
+  } catch {
+    // storage can be blocked
+    return null;
+  }
+}
+
+function writePendingToken(token: string) {
+  try {
+    sessionStorage.setItem(pendingTokenKey, token);
+  } catch {
+    // storage can be blocked
+  }
+}
+
+function clearPendingToken() {
+  try {
+    sessionStorage.removeItem(pendingTokenKey);
+  } catch {
+    // storage can be blocked
+  }
+}
 
 @Component({
   selector: 'tapiz-verify-email',
@@ -32,6 +63,21 @@ type VerifyState = 'verifying' | 'verified' | 'invalid' | 'error';
             <p role="status">Your email is verified.</p>
             <div class="links">
               <a routerLink="/">Continue to Tapiz</a>
+            </div>
+          }
+          @case ('wrong-account') {
+            <p
+              class="error"
+              role="alert">
+              This link is for another account. Sign in to the account that was
+              created with this email to verify it.
+            </p>
+            <div class="links">
+              <a
+                routerLink="/login"
+                [queryParams]="{ returnUrl }"
+                >Sign in to another account</a
+              >
             </div>
           }
           @default {
@@ -67,8 +113,10 @@ type VerifyState = 'verifying' | 'verified' | 'invalid' | 'error';
 export class VerifyEmailComponent implements OnInit {
   #authApiService = inject(AuthApiService);
   #authService = inject(AuthService);
+  #router = inject(Router);
 
-  readonly token = takeHashToken(inject(DOCUMENT));
+  readonly returnUrl = returnUrl;
+  readonly token = takeHashToken(inject(DOCUMENT)) ?? readPendingToken();
   user = inject(Store).selectSignal(appFeature.selectUser);
   state = signal<VerifyState>(this.token ? 'verifying' : 'invalid');
   error = signal('This verification link is invalid or has expired.');
@@ -80,21 +128,39 @@ export class VerifyEmailComponent implements OnInit {
   });
 
   ngOnInit() {
-    if (!this.token) {
+    const token = this.token;
+
+    if (!token) {
       return;
     }
 
-    this.#authApiService.verifyEmail({ token: this.token }).subscribe({
-      next: ({ user }) => {
-        // the link may have been opened while signed in as someone else
-        if (this.user()?.id === user.id) {
-          this.#authService.setUser(user);
-        }
+    const user = this.user();
 
+    if (!user || user.isGuest) {
+      writePendingToken(token);
+      void this.#router.navigate(['/login'], { queryParams: { returnUrl } });
+      return;
+    }
+
+    this.#authApiService.verifyEmail({ token }).subscribe({
+      next: ({ user }) => {
+        clearPendingToken();
+        this.#authService.setUser(user);
         this.state.set('verified');
       },
       error: (error) => {
-        if (authErrorCode(error) === 'INVALID_OR_EXPIRED_TOKEN') {
+        const code = authErrorCode(error);
+
+        // signed in to another account: keep the link for the next sign in
+        if (code === 'LOGIN_REQUIRED') {
+          writePendingToken(token);
+          this.state.set('wrong-account');
+          return;
+        }
+
+        clearPendingToken();
+
+        if (code === 'INVALID_OR_EXPIRED_TOKEN') {
           this.state.set('invalid');
           return;
         }

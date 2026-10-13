@@ -238,6 +238,17 @@ describe('user', () => {
     expect(await db.board.getBoard(board.id)).toBeFalsy();
   });
 
+  it('rejects negative notification offsets', async () => {
+    const caller = await getUserCaller(40);
+
+    expect(
+      await caller.user.notifications({ offset: -1 }).catch((e) => e.code),
+    ).toEqual('BAD_REQUEST');
+    expect(await caller.user.notifications({ offset: 0 })).toMatchObject({
+      items: [],
+    });
+  });
+
   describe('invites', () => {
     let caller: Awaited<ReturnType<typeof getUserCaller>>;
     let caller2: Awaited<ReturnType<typeof getUserCaller>>;

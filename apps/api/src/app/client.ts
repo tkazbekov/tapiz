@@ -11,6 +11,7 @@ import { validation } from './validation.js';
 import { z } from 'zod';
 import { haveAccess } from './db/board-db.js';
 import { haveAccessTeam } from './db/team-db.js';
+import { logError } from './log-error.js';
 
 export interface ClientIdentity {
   id: string;
@@ -110,7 +111,7 @@ export class Client {
     messages = (messages as unknown[]).filter((message) => !!message);
 
     void this.processMsg(messages).catch((e) => {
-      console.error(e);
+      logError(e);
     });
   }
 
@@ -418,7 +419,7 @@ export class Client {
         this.getSetStateAction(this.server.getBoard(boardId) ?? board),
       );
     } catch (e) {
-      console.error(e);
+      logError(e);
 
       if (!isStale()) {
         this.close();

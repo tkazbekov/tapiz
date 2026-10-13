@@ -168,11 +168,33 @@ const credentialReset = {
   apiTokenCreatedAt: null,
 };
 
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function deleteSessionsOf(tx: Transaction, accountId: string) {
+  const sessions = await tx
+    .delete(schema.sessions)
+    .where(eq(schema.sessions.accountId, accountId))
+    .returning({ id: schema.sessions.id });
+
+  return sessions.map((session) => session.id);
+}
+
+// Credential changes delete the account's sessions first, then update the
+// account, in one transaction. updateUserApiToken locks its session row before
+// the account row, the same order, so a token minted on an old session either
+// commits first and is cleared here, or finds its session gone.
+// Returns the deleted session ids, for their sockets.
 export async function setPassword(id: string, passwordHash: string) {
-  await db
-    .update(schema.accounts)
-    .set({ passwordHash, ...credentialReset })
-    .where(eq(schema.accounts.id, id));
+  return db.transaction(async (tx) => {
+    const sessionIds = await deleteSessionsOf(tx, id);
+
+    await tx
+      .update(schema.accounts)
+      .set({ passwordHash, ...credentialReset })
+      .where(eq(schema.accounts.id, id));
+
+    return sessionIds;
+  });
 }
 
 // Same password, stronger parameters. Only replaces the hash it was derived
@@ -213,29 +235,46 @@ export async function setPasswordReset(
 
 // Single use: the matching row is updated and the hash cleared atomically.
 // Completing a reset proves the mailbox, so it also verifies the email.
+// Sessions go first, as in setPassword.
 export async function consumePasswordReset(
   resetHash: string,
   passwordHash: string,
 ) {
-  const users = await db
-    .update(schema.accounts)
-    .set({
-      passwordHash,
-      ...credentialReset,
-      emailVerifiedAt: sql`now()`,
-      emailVerifyHash: null,
-      emailVerifyExpiresAt: null,
-    })
-    .where(
-      and(
-        eq(schema.accounts.passwordResetHash, resetHash),
-        gt(schema.accounts.passwordResetExpiresAt, sql`now()`),
-        eq(schema.accounts.isGuest, false),
-      ),
-    )
-    .returning({ id: schema.accounts.id });
+  const resetFilter = and(
+    eq(schema.accounts.passwordResetHash, resetHash),
+    gt(schema.accounts.passwordResetExpiresAt, sql`now()`),
+    eq(schema.accounts.isGuest, false),
+  );
 
-  return users.at(0)?.id ?? null;
+  return db.transaction(async (tx) => {
+    const account = (
+      await tx
+        .select({ id: schema.accounts.id })
+        .from(schema.accounts)
+        .where(resetFilter)
+    ).at(0);
+
+    if (!account) {
+      return null;
+    }
+
+    const sessionIds = await deleteSessionsOf(tx, account.id);
+
+    // a concurrent confirm of the same link may have won meanwhile
+    const users = await tx
+      .update(schema.accounts)
+      .set({
+        passwordHash,
+        ...credentialReset,
+        emailVerifiedAt: sql`now()`,
+        emailVerifyHash: null,
+        emailVerifyExpiresAt: null,
+      })
+      .where(and(eq(schema.accounts.id, account.id), resetFilter))
+      .returning({ id: schema.accounts.id });
+
+    return users.length ? { accountId: account.id, sessionIds } : null;
+  });
 }
 
 export async function setEmailVerification(
@@ -252,7 +291,20 @@ export async function setEmailVerification(
     .where(eq(schema.accounts.id, id));
 }
 
-export async function consumeEmailVerification(verifyHash: string) {
+function emailVerifyFilter(verifyHash: string) {
+  return and(
+    eq(schema.accounts.emailVerifyHash, verifyHash),
+    gt(schema.accounts.emailVerifyExpiresAt, sql`now()`),
+    eq(schema.accounts.isGuest, false),
+  );
+}
+
+// Only the account the link was sent for can use it: otherwise whoever
+// registers someone else's address gets it verified by the owner's click.
+export async function consumeEmailVerification(
+  verifyHash: string,
+  accountId: string,
+) {
   const users = await db
     .update(schema.accounts)
     .set({
@@ -261,15 +313,21 @@ export async function consumeEmailVerification(verifyHash: string) {
       emailVerifyExpiresAt: null,
     })
     .where(
-      and(
-        eq(schema.accounts.emailVerifyHash, verifyHash),
-        gt(schema.accounts.emailVerifyExpiresAt, sql`now()`),
-        eq(schema.accounts.isGuest, false),
-      ),
+      and(eq(schema.accounts.id, accountId), emailVerifyFilter(verifyHash)),
     )
     .returning({ id: schema.accounts.id });
 
   return users.at(0)?.id ?? null;
+}
+
+// Whether the link is still valid for some account (it is not consumed).
+export async function isEmailVerificationPending(verifyHash: string) {
+  const users = await db
+    .select({ id: schema.accounts.id })
+    .from(schema.accounts)
+    .where(emailVerifyFilter(verifyHash));
+
+  return users.length > 0;
 }
 
 export async function deleteAccount(userId: string): Promise<unknown> {
@@ -310,19 +368,45 @@ export async function getUserApiTokenInfo(userId: string) {
   };
 }
 
-export async function updateUserApiToken(userId: string, apiTokenHash: string) {
-  const users = await db
-    .update(schema.accounts)
-    .set({
-      apiTokenHash,
-      apiTokenCreatedAt: sql`now()`,
-    })
-    .where(eq(schema.accounts.id, userId))
-    .returning({
-      apiTokenCreatedAt: schema.accounts.apiTokenCreatedAt,
-    });
+// With a session id, the session row is locked first (see setPassword) and
+// nothing is written once it is gone. Returns undefined then.
+export async function updateUserApiToken(
+  userId: string,
+  apiTokenHash: string,
+  sessionId: string | null,
+) {
+  return db.transaction(async (tx) => {
+    if (sessionId) {
+      const sessions = await tx
+        .select({ id: schema.sessions.id })
+        .from(schema.sessions)
+        .where(
+          and(
+            eq(schema.sessions.id, sessionId),
+            eq(schema.sessions.accountId, userId),
+            gt(schema.sessions.expiresAt, sql`now()`),
+          ),
+        )
+        .for('share');
 
-  return users.at(0)?.apiTokenCreatedAt;
+      if (!sessions.length) {
+        return undefined;
+      }
+    }
+
+    const users = await tx
+      .update(schema.accounts)
+      .set({
+        apiTokenHash,
+        apiTokenCreatedAt: sql`now()`,
+      })
+      .where(eq(schema.accounts.id, userId))
+      .returning({
+        apiTokenCreatedAt: schema.accounts.apiTokenCreatedAt,
+      });
+
+    return users.at(0)?.apiTokenCreatedAt;
+  });
 }
 
 export async function invite(

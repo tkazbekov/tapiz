@@ -20,6 +20,7 @@ import { BulletList, ListItem, OrderedList } from '@tiptap/extension-list';
 import { Paragraph } from '@tiptap/extension-paragraph';
 import { Strike } from '@tiptap/extension-strike';
 import { Text } from '@tiptap/extension-text';
+import { normalizeLinkUrl } from '@tapiz/board-commons/rich-text/rich-text-link';
 
 @Component({
   selector: 'tapiz-rich-text-editor',
@@ -261,7 +262,7 @@ export class RichTextEditorComponent
       return;
     }
 
-    const href = this.normalizeLinkUrl(url);
+    const href = normalizeLinkUrl(url);
 
     if (!href) {
       editor.chain().focus().extendMarkRange('link').unsetLink().run();
@@ -276,24 +277,6 @@ export class RichTextEditorComponent
 
   protected markAsTouched() {
     this.onTouched();
-  }
-
-  private normalizeLinkUrl(url: string) {
-    const trimmedUrl = url.trim();
-
-    if (!trimmedUrl) {
-      return '';
-    }
-
-    if (/^(https?:\/\/|mailto:|tel:|#|\/)/i.test(trimmedUrl)) {
-      return trimmedUrl;
-    }
-
-    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmedUrl)) {
-      return '';
-    }
-
-    return `https://${trimmedUrl}`;
   }
 
   private bumpEditorState() {

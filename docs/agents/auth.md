@@ -30,9 +30,11 @@ Registration order in `init-server.ts` matters: cookie, CORS (so 429s carry CORS
 ## Notes
 
 - Login is limited to 10 attempts per 15 minutes per email, counted before the password check. This lets someone lock an account out for the window; that is accepted.
-- Email-matched invites only apply to accounts with `email_verified_at` set.
-- Password reset or change clears the API token and ends all of the account's sessions; a change signs the current browser in again with a new session (its sockets reconnect).
-- Socket handshakes check `Origin`; sessions are validated there without sliding.
+- Email-matched invites only apply to accounts with `email_verified_at` set, and mention emails only go to verified addresses.
+- `POST /api/auth/verify-email` needs a cookie session of the account the link was sent for; otherwise it answers 401 `LOGIN_REQUIRED` and the link stays unused. The web page keeps the token in `sessionStorage` (never a URL) while it sends the visitor to `/login?returnUrl=/verify-email`, and clears it once the API answered. The email names the display name that registered.
+- Password reset or change clears the API token and ends all of the account's sessions; a change signs the current browser in again with a new session (its sockets reconnect). Both run in one transaction that deletes the sessions before updating the account; `updateUserApiToken` share-locks its session row before the account row, so a token minted on an old session is either cleared by the reset or refused. Sockets are disconnected after the commit.
+- Socket handshakes check `Origin` (`allowRequest`), then an `io.use()` middleware validates the session without sliding (`attachBoardSockets` in `server.ts`, also used by `initTestServer`). `connection` only fires for authenticated sockets and registers the client's listeners synchronously, so events sent right after `connect` are handled. A refused handshake reaches the browser as `connect_error` (`unauthenticated` or `server_error`) and leaves the socket inactive; `ws.service.ts` then rechecks the session. Sessions that end later still get `auth_error` before the disconnect.
+- Never log a `DrizzleQueryError` (or an error wrapping one) directly: its message and stack contain the query params (password hashes, board state). Use `logError` from `log-error.ts`; the Fastify error handler and tRPC formatter answer unexpected errors with a generic message.
 
 ## Testing Locally
 

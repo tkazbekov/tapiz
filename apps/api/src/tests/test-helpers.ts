@@ -7,7 +7,7 @@ import { Server as WsServer } from 'socket.io';
 import customParser from 'socket.io-msgpack-parser';
 import { createCallerFactory } from '../app/trpc.js';
 import type { AppContext } from '../app/app.context.js';
-import { Server } from '../app/server.js';
+import { Server, attachBoardSockets } from '../app/server.js';
 import db from '../app/db/index.js';
 import { io } from 'socket.io-client';
 import { setServer } from '../app/global.js';
@@ -171,17 +171,7 @@ export const initTestServer = async (port: number): Promise<Server> => {
   const server = new Server(io);
   setServer(server);
 
-  io.on('connection', (socket) => {
-    void server
-      .connection(
-        socket,
-        fastify.parseCookie(socket.request.headers.cookie ?? ''),
-      )
-      .catch((e) => {
-        console.error(e);
-        socket.disconnect(true);
-      });
-  });
+  attachBoardSockets(io, server, (header) => fastify.parseCookie(header));
 
   await fastify.listen({ port });
 

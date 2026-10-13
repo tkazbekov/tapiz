@@ -69,6 +69,19 @@ describe('mailer', () => {
     expect(html).toContain('&lt;b&gt;team&lt;/b&gt;');
   });
 
+  it('names the registered account in the verification email', async () => {
+    await mailer.sendVerificationEmail(
+      'to@test.dev',
+      'http://tapiz.test/verify-email#token=abc',
+      '<b>Mallory</b>',
+    );
+
+    const { html } = transportSendMail.mock.calls[0][0];
+
+    expect(html).toContain('named &lt;b&gt;Mallory&lt;/b&gt;');
+    expect(html).toContain('href="http://tapiz.test/verify-email#token=abc"');
+  });
+
   it('never throws when the transport fails', async () => {
     transportSendMail.mockRejectedValue(new Error('smtp down'));
     const consoleError = vi

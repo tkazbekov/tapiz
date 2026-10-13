@@ -134,6 +134,9 @@ importers:
       color-string:
         specifier: ^2.1.4
         version: 2.1.4
+      dompurify:
+        specifier: ^3.4.17
+        version: 3.4.17
       dotenv:
         specifier: ^16.4.5
         version: 16.4.5
@@ -149,6 +152,9 @@ importers:
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
+      jsdom:
+        specifier: ^24.0.0
+        version: 24.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       ngx-infinite-scroll:
         specifier: ^22.0.0
         version: 22.0.0(@angular/common@22.1.8(@angular/core@22.1.8(@angular/compiler@22.1.8)(rxjs@7.8.2)(zone.js@0.15.0))(rxjs@7.8.2))(@angular/core@22.1.8(@angular/compiler@22.1.8)(rxjs@7.8.2)(zone.js@0.15.0))
@@ -291,9 +297,6 @@ importers:
       jiti:
         specifier: 2.7.0
         version: 2.7.0
-      jsdom:
-        specifier: ^24.0.0
-        version: 24.1.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       jsonc-eslint-parser:
         specifier: ^3.3.0
         version: 3.3.0
@@ -4340,6 +4343,9 @@ packages:
   '@types/tough-cookie@4.0.5':
     resolution: {integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==}
 
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
@@ -5290,6 +5296,9 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
+
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
 
@@ -5589,6 +5598,7 @@ packages:
   eslint@9.13.0:
     resolution: {integrity: sha512-EYZK6SX6zjFHST/HRytOdA/zE72Cq/bfw45LSyuwrdvcclb/gqV8RRQxywOBEWO2+WDpva6UZa4CcDeJKzUCFA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -8291,6 +8301,7 @@ packages:
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-mimetype@4.0.0:
     resolution: {integrity: sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==}
@@ -12738,6 +12749,9 @@ snapshots:
 
   '@types/tough-cookie@4.0.5': {}
 
+  '@types/trusted-types@2.0.7':
+    optional: true
+
   '@types/ws@8.18.2':
     dependencies:
       '@types/node': 24.19.2
@@ -13824,6 +13838,10 @@ snapshots:
   domhandler@5.0.3:
     dependencies:
       domelementtype: 2.3.0
+
+  dompurify@3.4.17:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
 
   domutils@3.2.2:
     dependencies:
