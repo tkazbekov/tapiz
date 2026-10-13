@@ -237,7 +237,7 @@ const CREATE_LAYOUT_DESCRIPTION = [
   'Create a ready-made layout of labelled panels with 300x300 note slots in one call: kind "columns" (lanes side by side, at most 12), "grid" (gridColumns per row, default about square), "quadrants" (exactly 4 cells: top-left, top-right, bottom-left, bottom-right, with optional axes captions in reading order: { x: [left, right], y: [top, bottom] }, e.g. y: ["High impact", "Low impact"] puts high impact on the top row) or "radial" (2 to 8 cells on a ring, the first at the top and the rest clockwise, around the centre decorations; the ring grows so no cell overlaps another or the centre art).',
   `Sizing is automatic: each cell holds noteColumns (default 2, max 4) columns of ${NOTE}x${NOTE} notes, ${SLOT_GAP}px apart, inside ${PAD}px padding, so a cell is ${2 * PAD} + n*${NOTE} + (n-1)*${SLOT_GAP} wide; the header band fits the title and subtitle; every cell has the same size, room for at least capacity notes (default 6, radial 4) and always at least one empty row after the seed notes. Cell notes are seeded as notes in reading order; title and description become text above the cells.`,
   "Panels never get a color (it would recolour the notes inside). Per-cell style: { shape: rect | rounded | pill, backgroundColor, borderColor (#rrggbb), borderWidth (0-20), frameless (a transparent lane without a border, e.g. over art) }; style.backgroundColor wins over the older cell backgroundColor. Notes use noteColor, or else the user's default note colour.",
-  `decorations (at most ${MAX_LAYOUT_DECORATIONS}): Cocomaterial illustrations placed with the layout, { url, anchor, width, height, rotation?, offset?: { x, y } }. url must be an https://cocomaterial.com/... asset url, usually the svg field of a search_cocomaterial_vectors result (list_cocomaterial_tags for tags); other hosts are rejected. .svg urls become vector nodes, anything else an image node. anchor: "center" (the middle of the cells; radial: the ring centre, sized into the ring), "behind" (the middle of the cells, below every panel), "top-left" | "top-right" | "bottom-left" | "bottom-right" (a sticker centred on that corner of the whole layout, title included) or { cell, corner } (a corner, or "center", of one cell, cells numbered from 0). offset moves it from the anchor in board pixels; width and height should follow the art's aspectRatio from search_cocomaterial_vectors. Decorations count in the layout bounds; the layout title, description and axis captions stay above them, but a sticker on a cell's top corner can cover that cell's header title, so prefer a bottom corner or an offset that moves it outward.`,
+  `decorations (at most ${MAX_LAYOUT_DECORATIONS}): Cocomaterial illustrations placed with the layout, { url, anchor, width, height, rotation?, offset?: { x, y } }. url must be an https://cocomaterial.com/... asset url, usually the svg field of a search_cocomaterial_vectors result (list_cocomaterial_tags with a query such as "sea" finds tag slugs); other hosts are rejected. .svg urls become vector nodes, anything else an image node. anchor: "center" (the middle of the cells; radial: the ring centre, sized into the ring), "behind" (the middle of the cells, below every panel), "top-left" | "top-right" | "bottom-left" | "bottom-right" (a sticker centred on that corner of the whole layout, title included) or { cell, corner } (a corner, or "center", of one cell, cells numbered from 0). offset moves it from the anchor in board pixels; width and height should follow the art's aspectRatio from search_cocomaterial_vectors. Decorations count in the layout bounds; the layout title, description and axis captions stay above them, but a sticker on a cell's top corner can cover that cell's header title, so prefer a bottom corner or an offset that moves it outward.`,
   'origin is the board position of the layout\'s top-left; without it the layout goes 400px right of (placement "right") or below (placement "below") the existing content. layer "auto" (default): board admins get the panels, texts and decorations on layer 1, with the panels inserted behind existing notes, anyone else gets everything on layer 0 (layerCoerced: true); "asStored" keeps them on layer 1 and is rejected for users who are not board admins. dryRun: true writes nothing and reports where every node would go.',
   "Returns { status: applied | dry_run | rejected, origin, bounds, nodeCount, layerCoerced, refs (template ref -> node id), lint (advisory issues), rejected, nodes (dry run only), cells: [{ ref, title, panelId, bounds, noteIds, freeSlots }] } in board coordinates. To add notes later, put 300x300 notes at a cell's freeSlots positions (top-left corners) on layer 0 with apply_board_actions. Check the result with preview_board.",
   'Example, a 3-column retro: { "boardId": "…", "layout": { "kind": "columns", "title": "Sprint 42 retro", "cells": [ { "title": "Went well", "notes": ["Pairing on the API", "Fast reviews"] }, { "title": "To improve", "notes": ["Flaky e2e tests", "Late scope changes"] }, { "title": "Actions", "subtitle": "Owner and date", "notes": ["Fix the e2e flakes", "Freeze scope on Wednesday"] } ] } }.',
@@ -266,11 +266,15 @@ const previewRegionSchema = z
     '"content": every positioned node plus an 80px margin; { x, y, width, height }: a board rectangle; { nodeIds }: these nodes (e.g. the refs values create_layout returned) plus an 80px margin',
   );
 
+const EMOJI_PLACEHOLDER_NOTE =
+  'emoji are shown as placeholders in previews; they display normally in the web app';
+
 const PREVIEW_BOARD_DESCRIPTION = [
   "Render a board, a board rectangle or a set of nodes as a PNG image on the server, as the API token user sees it (while notes are hidden, other users' notes are blank cards). Use it to check a layout after create_layout, insert_template or hand-built edits, especially freeform or artistic ones, and iterate on what you see.",
   'The image is width pixels wide (400-1600, default 1200) and at most 4800 pixels tall; a tall region renders narrower, and a region too thin to draw at that size (e.g. content stretched by one far-away node) returns only the legend with a message: preview a rectangle or nodeIds instead. Panels, notes, text, groups, arrows, drawings, vectors and images are drawn in board order with their rotation; text sizes follow the editor closely but not exactly.',
   'Only https://cocomaterial.com art is fetched; other images (uploads included) are labelled placeholder boxes and listed in skippedAssets with a reason.',
-  'Returns an image item and a text legend { region (board coordinates of the image), scale (image pixels per board unit), image: { width, height }, nodeCount, skippedAssets: [{ url, reason }], missingNodeIds }; board position = region.x + pixel x / scale. An empty board or region returns only the legend, with a message.',
+  `Emoji: ${EMOJI_PLACEHOLDER_NOTE}. The server has no emoji font, so each emoji is a small grey rounded square, counted in emojiPlaceholders; do not remove or replace emoji because of how they look in a preview.`,
+  'Returns an image item and a text legend { region (board coordinates of the image), scale (image pixels per board unit), image: { width, height }, nodeCount, skippedAssets: [{ url, reason }], emojiPlaceholders (emoji drawn as placeholders), emojiNote (when emojiPlaceholders > 0), missingNodeIds }; board position = region.x + pixel x / scale. An empty board or region returns only the legend, with a message.',
 ].join(' ');
 
 class McpSocket {
@@ -367,14 +371,101 @@ function isAllowedOrigin(origin: string | undefined) {
   return allowedOrigins.has(origin);
 }
 
-async function fetchCocomaterial<T>(path: string) {
-  const response = await fetch(`${COCOMATERIAL_API_URL}${path}`);
+async function fetchCocomaterial<T>(path: string, init?: RequestInit) {
+  const response = await fetch(`${COCOMATERIAL_API_URL}${path}`, init);
 
   if (!response.ok) {
     throw new Error(`Cocomaterial request failed with ${response.status}`);
   }
 
   return (await response.json()) as T;
+}
+
+// the tag list is large and rarely changes; one fetch serves 10 minutes
+const COCOMATERIAL_TAGS_TTL_MS = 10 * 60 * 1000;
+// every caller waits on the shared request, so a hang must fail fast
+const COCOMATERIAL_TAGS_TIMEOUT_MS = 10_000;
+let cocomaterialTags: { tags: CocomaterialTag[]; expiresAt: number } | null =
+  null;
+let cocomaterialTagsRequest: Promise<CocomaterialTag[]> | null = null;
+
+export function clearCocomaterialTagCache() {
+  cocomaterialTags = null;
+  cocomaterialTagsRequest = null;
+}
+
+// an unexpected body throws, like a failed request, so it is not cached
+async function requestCocomaterialTags(): Promise<CocomaterialTag[]> {
+  const tags = await fetchCocomaterial<unknown>('/tags', {
+    signal: AbortSignal.timeout(COCOMATERIAL_TAGS_TIMEOUT_MS),
+  });
+
+  if (!Array.isArray(tags)) {
+    throw new Error('Unexpected Cocomaterial tags response');
+  }
+
+  return tags as CocomaterialTag[];
+}
+
+async function fetchCocomaterialTags(): Promise<CocomaterialTag[]> {
+  if (cocomaterialTags && cocomaterialTags.expiresAt > Date.now()) {
+    return cocomaterialTags.tags;
+  }
+
+  // concurrent calls share one request; a failure is not cached
+  const request = (cocomaterialTagsRequest ??= requestCocomaterialTags());
+
+  try {
+    const tags = await request;
+
+    if (cocomaterialTagsRequest === request) {
+      cocomaterialTags = {
+        tags,
+        expiresAt: Date.now() + COCOMATERIAL_TAGS_TTL_MS,
+      };
+    }
+
+    return tags;
+  } finally {
+    if (cocomaterialTagsRequest === request) {
+      cocomaterialTagsRequest = null;
+    }
+  }
+}
+
+/**
+ * Tag slugs, sorted, whose slug or name contains the query (any case); total
+ * counts every match, tags holds at most limit of them.
+ */
+export function filterCocomaterialTags(
+  tags: CocomaterialTag[],
+  query: string | undefined,
+  limit: number,
+) {
+  const needle = query?.trim().toLowerCase();
+  const slugs = [
+    ...new Set(
+      tags
+        .filter(
+          (tag) =>
+            typeof tag?.slug === 'string' &&
+            tag.slug &&
+            (!needle ||
+              tag.slug.toLowerCase().includes(needle) ||
+              (typeof tag.name === 'string' &&
+                tag.name.toLowerCase().includes(needle))),
+        )
+        .map((tag) => tag.slug),
+    ),
+  ].sort();
+  const returned = slugs.slice(0, limit);
+
+  return {
+    total: slugs.length,
+    returned: returned.length,
+    tags: returned,
+    truncated: returned.length < slugs.length,
+  };
 }
 
 const SVG_TAG_RE = /<svg\b[^>]*>/i;
@@ -606,6 +697,9 @@ export interface PreviewLegend {
   image?: { width: number; height: number };
   nodeCount: number;
   skippedAssets: { url: string; reason: string }[];
+  // emoji drawn as placeholder shapes (the server has no emoji font)
+  emojiPlaceholders: number;
+  emojiNote?: string;
   missingNodeIds?: string[];
   message?: string;
 }
@@ -659,6 +753,7 @@ export async function previewBoardAsMcpUser(
     region,
     nodeCount: 0,
     skippedAssets: [],
+    emojiPlaceholders: 0,
     ...(missingNodeIds.length ? { missingNodeIds } : {}),
   };
 
@@ -718,7 +813,7 @@ export async function previewBoardAsMcpUser(
     }
   }
 
-  const { png, skipped, scale } = rendered;
+  const { png, skipped, scale, emojiPlaceholders } = rendered;
 
   return {
     png,
@@ -729,6 +824,8 @@ export async function previewBoardAsMcpUser(
       image: { width: png.readUInt32BE(16), height: png.readUInt32BE(20) },
       nodeCount,
       skippedAssets: skipped,
+      emojiPlaceholders,
+      ...(emojiPlaceholders ? { emojiNote: EMOJI_PLACEHOLDER_NOTE } : {}),
     },
   };
 }
@@ -1408,8 +1505,24 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'List Cocomaterial tags',
       description:
-        'List available Cocomaterial tags that can be used to search board illustration assets.',
-      inputSchema: z.object({}),
+        'Find Cocomaterial tag slugs for search_cocomaterial_vectors. Pass a query such as "space", "sea" or "party" (a case-insensitive substring of the tag slug or name), then call search_cocomaterial_vectors with the slugs you pick. Returns { total (tags matching the query), returned, tags (slugs only, sorted), truncated (true when total > returned; narrow the query or raise limit) }. Without a query it lists every tag up to limit.',
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe(
+            'Case-insensitive substring of the tag slug or name, e.g. "space" or "sea"',
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .default(200)
+          .describe('Maximum number of slugs to return'),
+      }),
       annotations: {
         title: 'List Cocomaterial tags',
         readOnlyHint: true,
@@ -1418,12 +1531,10 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: true,
       },
     },
-    hideQueryDetails(async () => {
-      const tags = await fetchCocomaterial<CocomaterialTag[]>('/tags');
-
-      return textResult({
-        tags,
-      });
+    hideQueryDetails(async ({ query, limit }) => {
+      return textResult(
+        filterCocomaterialTags(await fetchCocomaterialTags(), query, limit),
+      );
     }),
   );
 
@@ -1432,7 +1543,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Search Cocomaterial vectors',
       description:
-        'Search Cocomaterial assets by tag slugs. Use list_cocomaterial_tags first when tags are unknown. Each result has aspectRatio (width / height of the art, null when unknown): give nodes and layout decorations a width and height in that ratio, since the art is letterboxed inside its box.',
+        'Search Cocomaterial assets by tag slugs. When tags are unknown, call list_cocomaterial_tags with a query such as "space" or "sea" first. Each result has aspectRatio (width / height of the art, null when unknown): give nodes and layout decorations a width and height in that ratio, since the art is letterboxed inside its box.',
       inputSchema: z.object({
         page: z.number().int().min(1).default(1).describe('Results page'),
         pageSize: z

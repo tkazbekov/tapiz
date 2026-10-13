@@ -188,7 +188,26 @@ Each rejection carries a `hint` on how to fix it.
 
 `list_cocomaterial_tags`
 
-Lists available Cocomaterial tag slugs.
+Finds Cocomaterial tag slugs to pass to `search_cocomaterial_vectors`. The full
+tag list is too large for an LLM context, so the tool returns slugs only and
+takes a query:
+
+```ts
+list_cocomaterial_tags({
+  query?: string; // 1-60 chars, case-insensitive substring of the tag slug or name, e.g. "space" or "sea"
+  limit?: number; // 1-500 (default 200)
+}) => {
+  total: number; // tags matching the query
+  returned: number; // tags.length
+  tags: string[]; // slugs, sorted
+  truncated: boolean; // total > returned: narrow the query or raise limit
+};
+```
+
+Pass a query for the theme (`"space"`, `"sea"`, `"party"`), then call
+`search_cocomaterial_vectors` with the slugs you pick. Without a query it lists
+every slug up to `limit`. The tag list is fetched from Cocomaterial at most
+once every 10 minutes per API process; a failed fetch is not cached.
 
 `search_cocomaterial_vectors`
 
@@ -571,6 +590,8 @@ preview_board({
       image?: { width: number; height: number };
       nodeCount: number; // top-level nodes drawn
       skippedAssets: { url: string; reason: string }[];
+      emojiPlaceholders: number; // emoji drawn as placeholder shapes
+      emojiNote?: string; // when emojiPlaceholders > 0
       missingNodeIds?: string[]; // nodeIds that are not on the board
       message?: string; // why there is no image
     }>,
@@ -596,6 +617,14 @@ preview_board({
   rotation included. Text sizes follow the editor closely, not exactly; text
   that does not fit a note or panel is cut at a whole line. Confirm fine
   detail in the browser.
+- The server has no emoji font, so each emoji (emoji-presentation characters,
+  pictographs with U+FE0F or followed by a skin tone or ZWJ, flags, keycaps
+  and ZWJ sequences) is drawn as a small grey rounded square instead of an
+  empty glyph box, and counted in `emojiPlaceholders`. With any, the legend carries
+  `emojiNote: "emoji are shown as placeholders in previews; they display normally in the web app"`:
+  the emoji are fine on the board, so do not remove them because of the
+  preview. Text-presentation symbols the preview font has (`©`, `™`, `★`, `✓`,
+  a plain `❤`) stay text.
 - Only `https://cocomaterial.com` art is fetched, the same host rule as layout
   decorations (5 s timeout, 2 MB, no redirects, at most 60 new fetches per
   render, an in-memory cache keyed without the query string). Every other
@@ -805,7 +834,7 @@ Create a fun retrospective:
 1. Call `get_board` to see `viewer` and `contentBounds`.
 2. Call `create_layout` with the columns and seed notes (try `dryRun: true`
    first to check `lint`).
-3. For a themed retro, call `list_cocomaterial_tags` and
+3. For a themed retro, call `list_cocomaterial_tags` with a theme query and
    `search_cocomaterial_vectors` for relevant art, and pass it to
    `create_layout` as `decorations` (or use `add_cocomaterial_asset` for art
    placed by hand, outside the cells). Try `kind: 'radial'` around a centre

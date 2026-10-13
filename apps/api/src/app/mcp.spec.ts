@@ -16,6 +16,7 @@ import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
   applyBoardActionsAsMcpUser,
+  clearCocomaterialTagCache,
   compactBoardNodes,
   compactCocomaterialVector,
   createCocomaterialNodeAction,
@@ -895,8 +896,10 @@ describe('mcp', () => {
           },
           nodeCount: created.nodeCount,
           skippedAssets: [],
+          emojiPlaceholders: 0,
           image: { width: 600 },
         });
+        expect(legend.emojiNote).toBeUndefined();
         expect(legend.scale).toBeCloseTo(600 / legend.region.width);
         expect(fetchSpy).toHaveBeenCalledWith(
           LAYOUT_EXAMPLES.starfish.decorations[0].url,
@@ -1011,6 +1014,35 @@ describe('mcp', () => {
         expect(JSON.stringify(result)).not.toContain(secret);
       });
 
+      it('counts emoji drawn as placeholders in the legend', async () => {
+        const board = await getUserCaller(1).board.create({
+          name: 'mcp preview emoji',
+        });
+        const user = mcpUser(1);
+        const base = noteAction(randomUUID(), user.id).data as TuNode;
+
+        await db.board.updateBoard(board.id, [
+          {
+            ...base,
+            content: {
+              ...(base.content as object),
+              text: '<p>Launch 🚀 party 🎉</p>',
+            },
+          } as TuNode,
+        ]);
+
+        const result = await callPreview(newServer(), user, {
+          boardId: board.id,
+        });
+
+        expect(result.content.map((it) => it.type)).toEqual(['image', 'text']);
+        expect(legendOf(result)).toMatchObject({
+          emojiPlaceholders: 2,
+          emojiNote:
+            'emoji are shown as placeholders in previews; they display normally in the web app',
+        });
+      });
+
       it('rejects a board without access', async () => {
         const foreign = await getUserCaller(3).board.create({
           name: 'mcp preview foreign',
@@ -1028,6 +1060,208 @@ describe('mcp', () => {
         expect(JSON.stringify(result.content)).toContain(
           'Unable to read board',
         );
+      });
+    });
+
+    describe('list_cocomaterial_tags', () => {
+      const tags = [
+        { name: 'Outer Space', slug: 'outer-space', url: 'u1' },
+        { name: 'Sea', slug: 'sea', url: 'u2' },
+        { name: 'Rocket', slug: 'rocket', url: 'u3' },
+        { name: 'Seaside', slug: 'beach', url: 'u4' },
+        { name: 'Spacecraft', slug: 'ship', url: 'u5' },
+      ];
+      const mockTags = () =>
+        vi
+          .spyOn(globalThis, 'fetch')
+          .mockImplementation(
+            async () => new Response(JSON.stringify(tags), { status: 200 }),
+          );
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+        clearCocomaterialTagCache();
+      });
+
+      it('returns sorted slugs matching the query on slug or name', async () => {
+        const fetchSpy = mockTags();
+        const result = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { query: 'SPACE' },
+        );
+
+        expect(result).toEqual({
+          total: 2,
+          returned: 2,
+          tags: ['outer-space', 'ship'],
+          truncated: false,
+        });
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'https://cocomaterial.com/api/tags',
+          { signal: expect.any(AbortSignal) },
+        );
+
+        const sea = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { query: 'sea' },
+        );
+
+        expect(sea.tags).toEqual(['beach', 'sea']);
+        // cached: one remote call for both
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('caps the list at limit and says it was truncated', async () => {
+        mockTags();
+
+        const result = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { limit: 2 },
+        );
+
+        expect(result).toEqual({
+          total: 5,
+          returned: 2,
+          tags: ['beach', 'outer-space'],
+          truncated: true,
+        });
+        expect(
+          result.tags.every((tag: unknown) => typeof tag === 'string'),
+        ).toBe(true);
+
+        const all = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          {},
+        );
+
+        expect(all).toMatchObject({ total: 5, returned: 5, truncated: false });
+        expect(JSON.stringify(all)).not.toContain('Outer Space');
+        expect(JSON.stringify(all)).not.toContain('"url"');
+      });
+
+      it('rejects an empty query and a limit out of range', async () => {
+        mockTags();
+
+        await expect(
+          callToolAs(newServer(), mcpUser(1), 'list_cocomaterial_tags', {
+            query: '',
+          }),
+        ).rejects.toThrow();
+        await expect(
+          callToolAs(newServer(), mcpUser(1), 'list_cocomaterial_tags', {
+            limit: 501,
+          }),
+        ).rejects.toThrow();
+      });
+
+      it('does not cache a failed request', async () => {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockImplementationOnce(async () => new Response('', { status: 503 }))
+          .mockImplementation(
+            async () => new Response(JSON.stringify(tags), { status: 200 }),
+          );
+
+        await expect(
+          callToolAs(newServer(), mcpUser(1), 'list_cocomaterial_tags', {}),
+        ).rejects.toThrow();
+
+        const result = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { query: 'rocket' },
+        );
+
+        expect(result.tags).toEqual(['rocket']);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+      });
+
+      it('does not cache a response that is not a tag list', async () => {
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockImplementationOnce(
+            async () =>
+              new Response(JSON.stringify({ detail: 'maintenance' }), {
+                status: 200,
+              }),
+          )
+          .mockImplementation(
+            async () => new Response(JSON.stringify(tags), { status: 200 }),
+          );
+
+        await expect(
+          callToolAs(newServer(), mcpUser(1), 'list_cocomaterial_tags', {}),
+        ).rejects.toThrow();
+
+        const result = await callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          {},
+        );
+
+        expect(result.total).toBe(5);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+      });
+
+      it('shares one request between concurrent calls', async () => {
+        let respond: (response: Response) => void = () => undefined;
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+          () =>
+            new Promise<Response>((resolve) => {
+              respond = resolve;
+            }),
+        );
+
+        const first = callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { query: 'sea' },
+        );
+        const second = callToolAs(
+          newServer(),
+          mcpUser(1),
+          'list_cocomaterial_tags',
+          { query: 'space' },
+        );
+
+        await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+        respond(new Response(JSON.stringify(tags), { status: 200 }));
+
+        expect((await first).tags).toEqual(['beach', 'sea']);
+        expect((await second).tags).toEqual(['outer-space', 'ship']);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('fetches the tags again once the cache expires', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+
+        try {
+          const fetchSpy = mockTags();
+          const list = () =>
+            callToolAs(newServer(), mcpUser(1), 'list_cocomaterial_tags', {});
+
+          await list();
+          vi.setSystemTime(Date.now() + 10 * 60 * 1000 - 1000);
+          await list();
+          expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+          vi.setSystemTime(Date.now() + 2000);
+          await list();
+          expect(fetchSpy).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
       });
     });
 

@@ -2,6 +2,7 @@ import { Resvg } from '@resvg/resvg-js';
 import { vi } from 'vitest';
 import type { TuNode } from '@tapiz/board-commons';
 import {
+  buildBoardPreview,
   buildBoardPreviewSvg,
   clearPreviewAssetCache,
   isPreviewAssetUrl,
@@ -10,6 +11,9 @@ import {
   previewImageSize,
   renderBoardPreview,
   safeColor,
+  splitEmoji,
+  truncateGraphemes,
+  wrapRuns,
 } from './board-preview.js';
 import { PreviewRenderError, renderSvgToPng } from './preview-renderer.js';
 
@@ -199,6 +203,273 @@ describe('board preview', () => {
       expect(svg).toMatch(
         /font-size="24"[^>]*><tspan>body &amp; more<\/tspan>/,
       );
+    });
+
+    describe('emoji', () => {
+      const EMOJI_LEFT =
+        /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u200D|\uFE0F|\u20E3/u;
+      const placeholders = (svg: string) =>
+        svg.match(/<rect class="emoji-placeholder"/g)?.length ?? 0;
+
+      it('splits text into plain parts and whole emoji clusters', () => {
+        expect(splitEmoji('Hi 🎉 👨‍👩‍👧 👍🏽 ❤️ 🇺🇸 1️⃣ © ™ ★ ✓ ❤ 123')).toEqual([
+          { text: 'Hi ', emoji: false },
+          { text: '🎉', emoji: true },
+          { text: ' ', emoji: false },
+          { text: '👨‍👩‍👧', emoji: true },
+          { text: ' ', emoji: false },
+          { text: '👍🏽', emoji: true },
+          { text: ' ', emoji: false },
+          { text: '❤️', emoji: true },
+          { text: ' ', emoji: false },
+          { text: '🇺🇸', emoji: true },
+          { text: ' ', emoji: false },
+          { text: '1️⃣', emoji: true },
+          // text-presentation symbols the preview font has
+          { text: ' © ™ ★ ✓ ❤ 123', emoji: false },
+        ]);
+      });
+
+      it('keeps a text-default pictograph whole with a skin tone or ZWJ', () => {
+        const clusters = [
+          '\u261D\u{1F3FD}', // index pointing up, medium skin tone
+          '\u270C\u{1F3FB}', // victory hand, light skin tone
+          '\u270D\u{1F3FF}', // writing hand, dark skin tone
+          '\u26F9\u{1F3FD}\u200D\u2642\uFE0F', // man bouncing ball, medium
+          '\u2764\u200D\u{1F525}', // unqualified heart on fire
+        ];
+
+        for (const cluster of clusters) {
+          expect(splitEmoji(`a ${cluster} b`)).toEqual([
+            { text: 'a ', emoji: false },
+            { text: cluster, emoji: true },
+            { text: ' b', emoji: false },
+          ]);
+        }
+      });
+
+      it('drops a stray ZWJ but keeps one joining letters', () => {
+        expect(splitEmoji('a\u200D b\u200D')).toEqual([
+          { text: 'a b', emoji: false },
+        ]);
+        // Devanagari half form: ka, virama, ZWJ, ssa
+        const devanagari = '\u0915\u094D\u200D\u0937';
+
+        expect(splitEmoji(devanagari)).toEqual([
+          { text: devanagari, emoji: false },
+        ]);
+      });
+
+      it('draws unqualified and skin-toned pictographs as one placeholder', () => {
+        const { svg, emojiPlaceholders } = buildBoardPreview(
+          [
+            note('n1', {
+              text: '<p>x y \u2764\u200D\u{1F525} \u261D\u{1F3FD} \u26F9\u{1F3FD}\u200D\u2642\uFE0F</p>',
+            }),
+          ],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        expect(emojiPlaceholders).toBe(3);
+        expect(placeholders(svg)).toBe(3);
+        expect(svg).not.toMatch(EMOJI_LEFT);
+        expect(svg).toContain('>x y </tspan>');
+      });
+
+      it('cuts text between whole characters, never inside an emoji', () => {
+        const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+
+        expect(truncateGraphemes('abcdef#\uFE0F\u20E3', 8)).toBe(
+          'abcdef#\uFE0F\u20E3',
+        );
+        expect(truncateGraphemes(`abcd${family}xyz`, 5)).toBe(`abcd${family}`);
+        expect(truncateGraphemes(`abcd${family}`, 4)).toBe('abcd');
+        expect(truncateGraphemes('e\u0301te', 2)).toBe('e\u0301t');
+      });
+
+      it('keeps an emoji whole where a token or poll title is cut', () => {
+        const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+        const token = (id: string, text: string, x: number) => ({
+          id,
+          type: 'token',
+          content: {
+            text,
+            position: { x, y: 0 },
+            width: 80,
+            height: 80,
+            layer: 0,
+          },
+        });
+        const { svg, emojiPlaceholders } = buildBoardPreview(
+          [
+            token('t1', 'abcdef#\uFE0F\u20E3', 0),
+            token('t2', `abcd${family}`, 100),
+            token('t3', 'abcdefgh\u{1F389}', 200),
+            {
+              id: 'p1',
+              type: 'poll',
+              content: {
+                title: `${'x'.repeat(59)}${family}tail`,
+                position: { x: 500, y: 300 },
+                width: 400,
+                height: 200,
+                layer: 0,
+              },
+            },
+          ] as TuNode[],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        // keycap, family and the poll's family; the ninth token character
+        // is cut whole
+        expect(emojiPlaceholders).toBe(3);
+        expect(placeholders(svg)).toBe(3);
+        expect(svg).not.toMatch(EMOJI_LEFT);
+        expect(svg).not.toContain('#<');
+        expect(svg).toContain('>abcdefgh</text>');
+        expect(svg).not.toContain('tail');
+      });
+
+      it('measures bold one-line text as bold when placing emoji', () => {
+        const svg = buildBoardPreviewSvg(
+          [
+            {
+              id: 'g1',
+              type: 'group',
+              content: {
+                title: '\u{1F3AC} MMMM \u{1F3AC}',
+                position: { x: 0, y: 0 },
+                width: 800,
+                height: 300,
+                layer: 0,
+              },
+            },
+          ] as TuNode[],
+          region,
+          { width: 500, assets: new Map() },
+        );
+        const xs = [
+          ...svg.matchAll(/<rect class="emoji-placeholder" x="([\d.]+)"/g),
+        ].map((match) => Number(match[1]));
+        const fontPx = 28;
+        // one emoji slot, then " MMMM " at Inter's bold estimate
+        const gap = 1.2 * fontPx + (0.28 * 2 + 0.85 * 4) * fontPx * 1.06;
+
+        expect(svg).toContain('font-weight="700"');
+        expect(xs).toHaveLength(2);
+        expect(xs[1] - xs[0]).toBeCloseTo(gap, 1);
+      });
+
+      it('draws each emoji cluster as a placeholder shape, not a glyph', () => {
+        const { svg, emojiPlaceholders } = buildBoardPreview(
+          [
+            note('n1', {
+              text: '<p>Ship it 🚀 👍🏽 👨‍👩‍👧</p><p style="text-align: center">⭐<strong>Go</strong>⭐</p>',
+            }),
+          ],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        expect(placeholders(svg)).toBe(5);
+        expect(emojiPlaceholders).toBe(5);
+        expect(svg).not.toMatch(EMOJI_LEFT);
+        expect(svg).toContain('>Ship it </tspan>');
+        expect(svg).toContain('<tspan x="');
+        expect(svg).toMatch(/font-weight="700">Go<\/tspan>/);
+        expect(parses(svg)).toBe(true);
+      });
+
+      it('replaces emoji in group titles, tokens and poll titles', () => {
+        const { svg, emojiPlaceholders } = buildBoardPreview(
+          [
+            {
+              id: 'g1',
+              type: 'group',
+              content: {
+                title: '🎬 Movie night',
+                position: { x: 0, y: 0 },
+                width: 400,
+                height: 300,
+                layer: 0,
+              },
+            },
+            {
+              id: 't1',
+              type: 'token',
+              content: {
+                text: '🐙',
+                position: { x: 500, y: 0 },
+                width: 80,
+                height: 80,
+                layer: 0,
+              },
+            },
+            {
+              id: 'p1',
+              type: 'poll',
+              content: {
+                title: 'Best 🍿?',
+                position: { x: 500, y: 300 },
+                width: 400,
+                height: 200,
+                layer: 0,
+              },
+            },
+          ] as TuNode[],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        expect(emojiPlaceholders).toBe(3);
+        expect(placeholders(svg)).toBe(3);
+        expect(svg).not.toMatch(EMOJI_LEFT);
+        expect(svg).toContain('Movie night</tspan>');
+      });
+
+      it('wraps an emoji as two characters and never splits it', () => {
+        const svg = buildBoardPreviewSvg(
+          [panel('p1', { width: 120, text: '<p>🎉🎉🎉🎉🎉🎉🎉🎉</p>' })],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        expect(placeholders(svg)).toBe(8);
+        expect(svg).not.toMatch(EMOJI_LEFT);
+
+        // 10px text in 40px: floor(40 / 5.5) = 7 characters, 3 emoji a line
+        const party = '\u{1F389}';
+        const lines = wrapRuns(
+          splitEmoji(party.repeat(8)).map((part) => ({
+            ...part,
+            bold: false,
+            color: null,
+          })),
+          10,
+          40,
+        );
+
+        expect(lines.map((line) => line.length)).toEqual([3, 3, 2]);
+        expect(
+          lines.every((line) =>
+            line.every((piece) => piece.emoji && piece.text === party),
+          ),
+        ).toBe(true);
+      });
+
+      it('leaves text without emoji as it was', () => {
+        const { svg, emojiPlaceholders } = buildBoardPreview(
+          [panel('p1', { width: 800, text: '<p>Plain © ★ text</p>' })],
+          region,
+          { width: 500, assets: new Map() },
+        );
+
+        expect(emojiPlaceholders).toBe(0);
+        expect(placeholders(svg)).toBe(0);
+        expect(svg).toContain('<tspan>Plain © ★ text</tspan>');
+      });
     });
 
     it('wraps long text within the box', () => {
@@ -495,6 +766,17 @@ describe('board preview', () => {
       expect(scale).toBeCloseTo(0.4);
       expect(skipped).toHaveLength(1);
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('reports how many emoji it drew as placeholders', async () => {
+      const { png, emojiPlaceholders } = await renderBoardPreview(
+        [note('n1', { text: '<p>Party 🎉 time 🥳</p>' })],
+        region,
+        400,
+      );
+
+      expect(png.byteLength).toBeGreaterThan(0);
+      expect(emojiPlaceholders).toBe(2);
     });
 
     it('caps the height of a tall region', async () => {

@@ -142,7 +142,80 @@ interface RunStyle {
 
 interface Run extends RunStyle {
   text: string;
+  // one emoji cluster, drawn as a placeholder shape
+  emoji?: boolean;
 }
+
+/*
+ * The server has no emoji font, so emoji would render as empty boxes. Each
+ * cluster (emoji-presentation or U+FE0F-qualified pictographs, astral
+ * pictographs, flags, keycaps, with skin tones, tags and ZWJ sequences) is
+ * drawn as a neutral shape instead. A text-default pictograph followed by a
+ * skin tone or a ZWJ starts a cluster too, as in ☝🏽 or the unqualified ❤‍🔥.
+ * Text-presentation symbols such as © ™ ★ ✓ stay text: the preview font has
+ * them.
+ */
+const EMOJI_CLUSTER_RE =
+  /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}(?:\uFE0F|(?=\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}))|[\u{1F000}-\u{1FAFF}])\p{Emoji_Modifier}?[\uFE0E\uFE0F]?(?:[\u{E0020}-\u{E007E}]+\u{E007F})?(?:\u200D\p{Extended_Pictographic}\uFE0F?\p{Emoji_Modifier}?)*)/gu;
+// variation selectors left outside a cluster are invisible in a browser, as is
+// a stray ZWJ; one between letters or marks shapes scripts such as Devanagari
+// and Arabic, so it stays
+const STRAY_SELECTORS_RE =
+  /[\uFE0E\uFE0F]|\u200D(?![\p{L}\p{M}])|(?<![\p{L}\p{M}])\u200D/gu;
+// an emoji counts as this many characters when wrapping
+const EMOJI_CHARS = 2;
+// the slot of an emoji placeholder on its line, in em
+const EMOJI_SLOT_EM = 1.2;
+const EMOJI_FILL = '#e9ecef';
+const EMOJI_STROKE = '#868e96';
+
+/** Text split into plain parts and single emoji clusters, in order. */
+export function splitEmoji(text: string): { text: string; emoji: boolean }[] {
+  const parts: { text: string; emoji: boolean }[] = [];
+  let last = 0;
+
+  const plain = (part: string) => {
+    const cleaned = part.replace(STRAY_SELECTORS_RE, '');
+
+    if (cleaned) {
+      parts.push({ text: cleaned, emoji: false });
+    }
+  };
+
+  for (const match of text.matchAll(EMOJI_CLUSTER_RE)) {
+    plain(text.slice(last, match.index));
+    parts.push({ text: match[0], emoji: true });
+    last = match.index + match[0].length;
+  }
+
+  plain(text.slice(last));
+
+  return parts;
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * The first max user-perceived characters of text. Cuts between grapheme
+ * clusters, so an emoji (keycap, flag, ZWJ sequence) is kept whole or dropped.
+ */
+export function truncateGraphemes(text: string, max: number): string {
+  let out = '';
+  let count = 0;
+
+  for (const { segment } of graphemes.segment(text)) {
+    if (count++ >= max) {
+      break;
+    }
+
+    out += segment;
+  }
+
+  return out;
+}
+
+const plainRuns = (text: string, style: RunStyle): Run[] =>
+  splitEmoji(text).map((part) => ({ ...style, ...part }));
 
 interface TextBlock {
   tag: string;
@@ -245,11 +318,13 @@ export function parseRichText(html: string, baseFontPx: number): TextBlock[] {
     const target = current();
     const color = [...stack].reverse().find((frame) => frame.color)?.color;
 
-    target.lines[target.lines.length - 1].push({
-      text,
-      bold: stack.some((frame) => frame.bold) || TAG_FONT_SIZES[target.tag] > 0,
-      color: color ?? null,
-    });
+    target.lines[target.lines.length - 1].push(
+      ...plainRuns(text, {
+        bold:
+          stack.some((frame) => frame.bold) || TAG_FONT_SIZES[target.tag] > 0,
+        color: color ?? null,
+      }),
+    );
   };
 
   let last = 0;
@@ -332,8 +407,12 @@ export function parseRichText(html: string, baseFontPx: number): TextBlock[] {
 
 type Piece = Run;
 
-const sameStyle = (a: RunStyle, b: RunStyle) =>
-  a.bold === b.bold && a.color === b.color;
+// emoji pieces never merge: each is one placeholder
+const mergeable = (a: Run, b: Run) =>
+  !a.emoji && !b.emoji && a.bold === b.bold && a.color === b.color;
+
+const pieceLength = (piece: Piece) =>
+  piece.emoji ? EMOJI_CHARS : [...piece.text].length;
 
 // words of styled pieces; a word can change style midway
 function toWords(runs: Run[]): Piece[][] {
@@ -366,17 +445,34 @@ function toWords(runs: Run[]): Piece[][] {
 }
 
 const wordLength = (word: Piece[]) =>
-  word.reduce((sum, piece) => sum + [...piece.text].length, 0);
+  word.reduce((sum, piece) => sum + pieceLength(piece), 0);
 
-// a word longer than the line breaks anywhere
+// a word longer than the line breaks anywhere but inside an emoji
 function splitWord(word: Piece[], maxChars: number): Piece[][] {
   const chars = word.flatMap((piece) =>
-    [...piece.text].map((char) => ({ ...piece, text: char })),
+    piece.emoji
+      ? [piece]
+      : [...piece.text].map((char) => ({ ...piece, text: char })),
   );
   const parts: Piece[][] = [];
+  let part: Piece[] = [];
+  let length = 0;
 
-  for (let index = 0; index < chars.length; index += maxChars) {
-    parts.push(chars.slice(index, index + maxChars));
+  for (const char of chars) {
+    const charLength = pieceLength(char);
+
+    if (part.length && length + charLength > maxChars) {
+      parts.push(part);
+      part = [];
+      length = 0;
+    }
+
+    part.push(char);
+    length += charLength;
+  }
+
+  if (part.length) {
+    parts.push(part);
   }
 
   return parts;
@@ -411,7 +507,10 @@ export function wrapRuns(
         line.push(...part);
         length = partLength;
       } else if (length + 1 + partLength <= maxChars) {
-        line.push({ ...line[line.length - 1], text: ' ' }, ...part);
+        line.push(
+          { ...line[line.length - 1], text: ' ', emoji: false },
+          ...part,
+        );
         length += 1 + partLength;
       } else {
         push();
@@ -432,7 +531,7 @@ function mergePieces(pieces: Piece[]): Piece[] {
   return pieces.reduce<Piece[]>((merged, piece) => {
     const previous = merged[merged.length - 1];
 
-    if (previous && sameStyle(previous, piece)) {
+    if (previous && mergeable(previous, piece)) {
       previous.text += piece.text;
     } else {
       merged.push({ ...piece });
@@ -440,6 +539,164 @@ function mergePieces(pieces: Piece[]): Piece[] {
 
     return merged;
   }, []);
+}
+
+export interface PreviewStats {
+  // emoji clusters drawn as placeholder shapes
+  emojiPlaceholders: number;
+}
+
+interface LineStyle {
+  x: number;
+  baseline: number;
+  fontPx: number;
+  fill: string;
+  // text-anchor; omitted for start when undefined
+  anchor?: 'start' | 'middle' | 'end';
+  // the whole line in bold
+  bold?: boolean;
+  stats?: PreviewStats;
+}
+
+const tspan = (piece: Piece, x?: number) => {
+  const attrs = [
+    x === undefined ? '' : ` x="${fmt(x)}"`,
+    piece.bold ? ' font-weight="700"' : '',
+    piece.color ? ` fill="${escapeXml(piece.color)}"` : '',
+  ].join('');
+
+  return `<tspan${attrs}>${escapeXml(piece.text)}</tspan>`;
+};
+
+// rough advance widths of Inter (the preview font), in em
+const NARROW_CHARS = new Set("ijlI|!.,:;'`");
+const SEMI_NARROW_CHARS = new Set('frt()[]{}"/-');
+const WIDE_CHARS = new Set('mwMW');
+
+function charWidthEm(char: string): number {
+  if (/\s/.test(char)) {
+    return 0.28;
+  }
+
+  if (NARROW_CHARS.has(char)) {
+    return 0.26;
+  }
+
+  if (SEMI_NARROW_CHARS.has(char)) {
+    return 0.37;
+  }
+
+  if (WIDE_CHARS.has(char)) {
+    return 0.85;
+  }
+
+  if (/[A-Z]/.test(char)) {
+    return 0.68;
+  }
+
+  return /\d/.test(char) ? 0.58 : 0.54;
+}
+
+// where a piece ends on a line with emoji; closer than the wrap estimate.
+// lineBold: the whole <text> is bold, though its pieces carry no weight
+const pieceWidth = (piece: Piece, fontPx: number, lineBold = false) =>
+  piece.emoji
+    ? EMOJI_SLOT_EM * fontPx
+    : [...piece.text].reduce((sum, char) => sum + charWidthEm(char), 0) *
+      fontPx *
+      (piece.bold || lineBold ? 1.06 : 1);
+
+// a rounded square in an emoji's slot, as tall as a capital letter
+function emojiPlaceholderSvg(left: number, baseline: number, fontPx: number) {
+  const slot = EMOJI_SLOT_EM * fontPx;
+  const side = fontPx * 0.8;
+
+  return `<rect class="emoji-placeholder" x="${fmt(left + (slot - side) / 2)}" y="${fmt(baseline - fontPx * 0.75)}" width="${fmt(side)}" height="${fmt(side)}" rx="${fmt(side * 0.22)}" fill="${EMOJI_FILL}" stroke="${EMOJI_STROKE}" stroke-width="${fmt(Math.max(1, fontPx * 0.06))}"/>`;
+}
+
+/**
+ * One line of styled pieces as an SVG <text>. A line with emoji is laid out
+ * with estimated character widths: each emoji becomes a placeholder shape in
+ * its slot and the text after it restarts just after the slot.
+ */
+const textElement = (
+  style: LineStyle,
+  anchor: string | undefined,
+  inner: string,
+) =>
+  `<text x="${fmt(style.x)}" y="${fmt(style.baseline)}" font-size="${fmt(style.fontPx)}"${style.bold ? ' font-weight="700"' : ''}${anchor ? ` text-anchor="${anchor}"` : ''} fill="${escapeXml(style.fill)}">${inner}</text>`;
+
+function lineSvg(pieces: Piece[], style: LineStyle): string {
+  const merged = mergePieces(pieces);
+
+  if (!merged.some((piece) => piece.emoji)) {
+    const spans = merged.map((piece) => tspan(piece)).join('');
+
+    return spans ? textElement(style, style.anchor, spans) : '';
+  }
+
+  const total = merged.reduce(
+    (sum, piece) => sum + pieceWidth(piece, style.fontPx, style.bold),
+    0,
+  );
+  let cursor =
+    style.anchor === 'middle'
+      ? style.x - total / 2
+      : style.anchor === 'end'
+        ? style.x - total
+        : style.x;
+  const spans: string[] = [];
+  const shapes: string[] = [];
+  // the next text starts a new chunk at an explicit x
+  let restart = true;
+
+  for (const piece of merged) {
+    if (piece.emoji) {
+      shapes.push(emojiPlaceholderSvg(cursor, style.baseline, style.fontPx));
+      restart = true;
+
+      if (style.stats) {
+        style.stats.emojiPlaceholders++;
+      }
+    } else if (restart) {
+      // leading spaces of a chunk collapse, so they move its x instead
+      const text = piece.text.trimStart();
+      const lead = piece.text.slice(0, piece.text.length - text.length);
+
+      if (text) {
+        spans.push(
+          tspan(
+            { ...piece, text },
+            cursor +
+              pieceWidth({ ...piece, text: lead }, style.fontPx, style.bold),
+          ),
+        );
+        restart = false;
+      }
+    } else {
+      spans.push(tspan(piece));
+    }
+
+    cursor += pieceWidth(piece, style.fontPx, style.bold);
+  }
+
+  return [
+    spans.length ? textElement(style, 'start', spans.join('')) : '',
+    ...shapes,
+  ].join('');
+}
+
+/** Plain text on one line, with emoji drawn as placeholders. */
+function plainLineSvg(text: string, style: LineStyle): string {
+  const runs = plainRuns(text, { bold: false, color: null });
+
+  if (runs.some((run) => run.emoji)) {
+    return lineSvg(runs, style);
+  }
+
+  const plain = runs.map((run) => run.text).join('');
+
+  return plain ? textElement(style, style.anchor, escapeXml(plain)) : '';
 }
 
 interface TextBox {
@@ -450,6 +707,7 @@ interface TextBox {
   color: string;
   // lines left for the whole preview; decremented
   budget?: { lines: number };
+  stats?: PreviewStats;
 }
 
 /**
@@ -494,22 +752,17 @@ export function richTextSvg(html: string, box: TextBox): string {
           return out.join('');
         }
 
-        const baseline = top + (lineBox - fontPx) / 2 + fontPx * 0.8;
-        const spans = mergePieces(line)
-          .map((piece) => {
-            const attrs = [
-              piece.bold ? ' font-weight="700"' : '',
-              piece.color ? ` fill="${escapeXml(piece.color)}"` : '',
-            ].join('');
+        const svg = lineSvg(line, {
+          x,
+          baseline: top + (lineBox - fontPx) / 2 + fontPx * 0.8,
+          fontPx,
+          fill: box.color,
+          anchor: block.align,
+          stats: box.stats,
+        });
 
-            return `<tspan${attrs}>${escapeXml(piece.text)}</tspan>`;
-          })
-          .join('');
-
-        if (spans) {
-          out.push(
-            `<text x="${fmt(x)}" y="${fmt(baseline)}" font-size="${fmt(fontPx)}" text-anchor="${block.align}" fill="${escapeXml(box.color)}">${spans}</text>`,
-          );
+        if (svg) {
+          out.push(svg);
         }
 
         top += lineBox;
@@ -536,6 +789,7 @@ interface DrawContext {
   // every panel, topmost first, for the note colour
   panels: TuNode[];
   budget: { lines: number };
+  stats: PreviewStats;
 }
 
 function drawingsSvg(drawings: unknown): string {
@@ -567,12 +821,20 @@ function labelledRect(
   height: number,
   label: string,
   fill = '#e9ecef',
+  stats?: PreviewStats,
 ) {
   const fontPx = Math.max(8, Math.min(32, width / 10, height / 3));
 
   return [
     `<rect width="${fmt(width)}" height="${fmt(height)}" rx="8" fill="${escapeXml(fill)}" stroke="#adb5bd" stroke-width="2" stroke-dasharray="8 6"/>`,
-    `<text x="${fmt(width / 2)}" y="${fmt(height / 2 + fontPx * 0.35)}" font-size="${fmt(fontPx)}" text-anchor="middle" fill="#495057">${escapeXml(label)}</text>`,
+    plainLineSvg(label, {
+      x: width / 2,
+      baseline: height / 2 + fontPx * 0.35,
+      fontPx,
+      fill: '#495057',
+      anchor: 'middle',
+      stats,
+    }),
   ].join('');
 }
 
@@ -599,6 +861,7 @@ function panelSvg(
     baseLineHeight: DEFAULT_LINE_HEIGHT,
     color: TEXT_COLOR,
     budget: ctx.budget,
+    stats: ctx.stats,
   });
 
   return [
@@ -676,6 +939,7 @@ function noteSvg(
         baseLineHeight: NOTE_LINE_HEIGHT,
         color: TEXT_COLOR,
         budget: ctx.budget,
+        stats: ctx.stats,
       })
     : '';
 
@@ -702,19 +966,28 @@ function textNodeSvg(
     baseLineHeight: DEFAULT_LINE_HEIGHT,
     color: TEXT_COLOR,
     budget: ctx.budget,
+    stats: ctx.stats,
   });
 
   return text ? `<g transform="translate(1 1)">${text}</g>` : '';
 }
 
-function groupSvg(content: Content, width: number, height: number) {
-  const title = str(content['title']);
-
+function groupSvg(
+  content: Content,
+  width: number,
+  height: number,
+  ctx: DrawContext,
+) {
   return [
     `<rect width="${fmt(width)}" height="${fmt(height)}" rx="36" fill="none" stroke="#adb5bd" stroke-width="2" stroke-dasharray="10 8"/>`,
-    title
-      ? `<text x="${GROUP_PADDING}" y="${GROUP_PADDING + 24}" font-size="28" font-weight="700" fill="${TEXT_COLOR}">${escapeXml(title)}</text>`
-      : '',
+    plainLineSvg(str(content['title']), {
+      x: GROUP_PADDING,
+      baseline: GROUP_PADDING + 24,
+      fontPx: 28,
+      fill: TEXT_COLOR,
+      bold: true,
+      stats: ctx.stats,
+    }),
   ].join('');
 }
 
@@ -738,12 +1011,25 @@ function imageSvg(
   );
 }
 
-function tokenSvg(content: Content, width: number, height: number) {
+function tokenSvg(
+  content: Content,
+  width: number,
+  height: number,
+  ctx: DrawContext,
+) {
   const fontPx = Math.max(8, Math.min(width, height) / 3);
 
   return [
     `<ellipse cx="${fmt(width / 2)}" cy="${fmt(height / 2)}" rx="${fmt(width / 2)}" ry="${fmt(height / 2)}" fill="${escapeXml(safeColor(content['backgroundColor'], '#868e96'))}"/>`,
-    `<text x="${fmt(width / 2)}" y="${fmt(height / 2 + fontPx * 0.35)}" font-size="${fmt(fontPx)}" font-weight="700" text-anchor="middle" fill="${escapeXml(safeColor(content['color'], '#ffffff'))}">${escapeXml(str(content['text']).slice(0, 8))}</text>`,
+    plainLineSvg(truncateGraphemes(str(content['text']), 8), {
+      x: width / 2,
+      baseline: height / 2 + fontPx * 0.35,
+      fontPx,
+      fill: safeColor(content['color'], '#ffffff'),
+      anchor: 'middle',
+      bold: true,
+      stats: ctx.stats,
+    }),
   ].join('');
 }
 
@@ -963,7 +1249,7 @@ function nodeSvg(node: TuNode, ctx: DrawContext): string {
       body = textNodeSvg(content, width, height, ctx);
       break;
     case 'group':
-      body = groupSvg(content, width, height);
+      body = groupSvg(content, width, height, ctx);
       break;
     case 'vector':
     case 'image':
@@ -973,15 +1259,16 @@ function nodeSvg(node: TuNode, ctx: DrawContext): string {
       body = labelledRect(
         width,
         height,
-        `Poll: ${str(content['title']).slice(0, 60)}`,
+        `Poll: ${truncateGraphemes(str(content['title']), 60)}`,
         '#ffffff',
+        ctx.stats,
       );
       break;
     case 'estimation':
       body = labelledRect(width, height, 'Estimation', '#ffffff');
       break;
     case 'token':
-      body = tokenSvg(content, width, height);
+      body = tokenSvg(content, width, height, ctx);
       break;
     default:
       body = labelledRect(width, height, node.type);
@@ -1054,14 +1341,15 @@ export function previewNodes(nodes: TuNode[], region: Rect): TuNode[] {
 }
 
 /**
- * Pure: the board region as an SVG `opts.width` pixels wide. Text is escaped
- * and colors are allowlisted, so board content can't inject markup.
+ * Pure: the board region as an SVG `opts.width` pixels wide, and how many
+ * emoji it drew as placeholders. Text is escaped and colors are allowlisted,
+ * so board content can't inject markup.
  */
-export function buildBoardPreviewSvg(
+export function buildBoardPreview(
   nodes: TuNode[],
   region: Rect,
   opts: BoardPreviewOptions,
-): string {
+): { svg: string } & PreviewStats {
   if (!validRegion(region)) {
     throw new Error(
       `Preview region must be at least ${MIN_PREVIEW_REGION}x${MIN_PREVIEW_REGION}`,
@@ -1086,17 +1374,28 @@ export function buildBoardPreviewSvg(
     viewerId: opts.viewerId,
     panels: nodes.filter((node) => node.type === 'panel').reverse(),
     budget: { lines: MAX_PREVIEW_TEXT_LINES },
+    stats: { emojiPlaceholders: 0 },
   };
   const body = previewNodes(nodes, region)
     .map((node) => nodeSvg(node, ctx))
     .join('\n');
-
-  return [
+  const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}" height="${size.height}" viewBox="${fmt(region.x)} ${fmt(region.y)} ${fmt(region.width)} ${fmt(region.height)}" preserveAspectRatio="none" font-family="${FONT_FAMILY}">`,
     `<rect x="${fmt(region.x)}" y="${fmt(region.y)}" width="${fmt(region.width)}" height="${fmt(region.height)}" fill="${BOARD_BACKGROUND}"/>`,
     body,
     '</svg>',
   ].join('\n');
+
+  return { svg, ...ctx.stats };
+}
+
+/** buildBoardPreview without the stats. */
+export function buildBoardPreviewSvg(
+  nodes: TuNode[],
+  region: Rect,
+  opts: BoardPreviewOptions,
+): string {
+  return buildBoardPreview(nodes, region, opts).svg;
 }
 
 /* ---------- assets ---------- */
@@ -1332,7 +1631,13 @@ export async function renderBoardPreview(
   region: Rect,
   width: number,
   opts: { viewerId?: string; fetch?: typeof fetch } = {},
-): Promise<{ png: Buffer; skipped: PreviewSkippedAsset[]; scale: number }> {
+): Promise<
+  {
+    png: Buffer;
+    skipped: PreviewSkippedAsset[];
+    scale: number;
+  } & PreviewStats
+> {
   const size = previewImageSize(region, width);
 
   if (!size) {
@@ -1343,16 +1648,17 @@ export async function renderBoardPreview(
 
   const visible = previewNodes(nodes, region);
   const { assets, skipped } = await loadPreviewAssets(visible, opts);
+  const build = (art: Map<string, string>) =>
+    buildBoardPreview(nodes, region, {
+      width: size.width,
+      height: size.height,
+      assets: art,
+      viewerId: opts.viewerId,
+    });
+  // the same text either way, so the same emoji count
+  const built = build(assets);
   const render = (art: Map<string, string>) =>
-    renderSvgToPng(
-      buildBoardPreviewSvg(nodes, region, {
-        width: size.width,
-        height: size.height,
-        assets: art,
-        viewerId: opts.viewerId,
-      }),
-      RENDER_FONTS,
-    );
+    renderSvgToPng(art === assets ? built.svg : build(art).svg, RENDER_FONTS);
   let png: Buffer;
 
   try {
@@ -1375,5 +1681,10 @@ export async function renderBoardPreview(
     );
   }
 
-  return { png, skipped, scale: size.width / region.width };
+  return {
+    png,
+    skipped,
+    scale: size.width / region.width,
+    emojiPlaceholders: built.emojiPlaceholders,
+  };
 }
