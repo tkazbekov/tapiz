@@ -74,8 +74,7 @@ export const getGuestAuth = (guestIndex: number): Principal => {
   };
 };
 
-// Test accounts own their email, as Google accounts did, so email
-// invitations reach them.
+// Test accounts have a verified email, so email invitations reach them.
 export const createUser = async (userIndex: number) => {
   const auth = getAuth(userIndex);
 

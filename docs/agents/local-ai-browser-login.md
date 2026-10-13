@@ -14,10 +14,13 @@ open a board and take screenshots.
   that would let the caller select a different user.
 - Verify that the token owner already has access to the requested board. Never
   grant or broaden board, team, or SaaS permissions through this route.
-- Issue the same normal Lucia session cookie used by regular login so all
-  existing authorization checks continue to apply.
+- Issue the same `tapiz_session` cookie (`via: 'session'`) used by regular
+  email and password login so all existing authorization checks continue to
+  apply. This deliberately bypasses `requireSessionAuth`, which otherwise keeps
+  API tokens from minting tokens or deleting the account; that is acceptable
+  only because the route is development-only.
 - Never place the API token in a URL, browser storage, or a cookie. Exchange it
-  server-side for the Lucia session cookie.
+  server-side for the session cookie.
 
 Use `POST /api/agent/session` to create the session. See the
 [development guide](../dev-guide.md#ai-screenshot-sessions) for configuration,

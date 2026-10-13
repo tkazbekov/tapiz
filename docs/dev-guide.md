@@ -36,21 +36,26 @@ The API exposes a Streamable HTTP MCP server for realtime board automation. See 
 ## AI screenshot sessions
 
 Local browser agents can create a normal session as an existing Tapiz user
-without completing Google login. Add the following to `.env` and restart the API:
+without signing in with their email and password. Add the following to `.env` and restart the API:
 
 ```dotenv
+NODE_ENV=development
 AI_AGENT_LOGIN_ENABLED=true
 ```
 
 The endpoint is registered only when `NODE_ENV=development`, even if the flag
-is enabled. The Docker Compose API uses production mode, so use
+is enabled. `pnpm start:api` does not set `NODE_ENV` itself, so keep it in
+`.env`. The Docker Compose API forces production mode, so use
 `pnpm start:api` for this workflow.
 
 Generate a personal API token from the Tapiz settings page and save it when it
 is shown. The agent sends that token to request a browser session for one
 board. The token owner must already have access to the board; this feature does
-not bypass board or team authorization. It creates the same Lucia session used
-by regular login, so the browser has the token owner's normal permissions.
+not bypass board or team authorization. It sets the same `tapiz_session` cookie
+used by regular login, so the browser has the token owner's normal permissions.
+Because that is a full session, the browser also passes `requireSessionAuth`
+(generating API tokens, deleting the account), which a plain API token cannot.
+This is why the route only exists in development.
 Close the browser context after taking the screenshot.
 
 With Playwright, the browser context's request client shares cookies with its
@@ -77,4 +82,4 @@ await page.screenshot({ path: 'board.png', fullPage: true });
 
 Send the API token only in the `Authorization` header. Do not put it in a URL,
 browser storage, or a cookie. The endpoint exchanges it server-side for the
-normal Lucia session cookie.
+normal `tapiz_session` cookie.

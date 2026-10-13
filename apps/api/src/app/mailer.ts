@@ -34,7 +34,8 @@ export async function sendMail(
 
   try {
     await transporter.sendMail({
-      from: process.env['SMTP_FROM'] ?? process.env['SMTP_USER'],
+      // .env.example ships SMTP_FROM="", which must fall back too
+      from: process.env['SMTP_FROM'] || process.env['SMTP_USER'],
       to,
       subject,
       html,

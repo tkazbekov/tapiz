@@ -82,6 +82,19 @@ describe('mailer', () => {
     consoleError.mockRestore();
   });
 
+  it('sends from SMTP_USER when SMTP_FROM is empty', async () => {
+    vi.stubEnv('SMTP_FROM', '');
+    vi.stubEnv('SMTP_USER', 'user@test.dev');
+
+    try {
+      await mailer.sendMail('to@test.dev', 'subject', 'html');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(transportSendMail.mock.calls[0][0].from).toEqual('user@test.dev');
+  });
+
   it('returns false without SMTP', async () => {
     delete process.env['SMTP_HOST'];
 

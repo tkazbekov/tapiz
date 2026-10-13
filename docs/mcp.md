@@ -49,6 +49,8 @@ Authorization: Bearer tapiz_pat_...
 
 The API stores only the token hash. The MCP endpoint hashes incoming tokens and resolves the Tapiz user from `accounts.api_token_hash`.
 
+Only registered accounts can hold API tokens. Guests who joined a board through a shared link can't generate one, and a token never resolves to a guest, so guests can't use MCP; they need to sign up first. Resetting or changing the password revokes the account's token.
+
 For local browser screenshots, the same token can be exchanged for a normal
 browser session through the development-only agent login endpoint. See
 [AI screenshot sessions](dev-guide.md#ai-screenshot-sessions). The token owner

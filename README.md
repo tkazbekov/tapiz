@@ -41,6 +41,5 @@ Tapiz is built using the following technologies and libraries:
 - [Drizzle ORM](https://orm.drizzle.team/)
 - [PostgreSQL](https://www.postgresql.org/)
 - [TRPC](https://trpc.io/)
-- [Lucia](https://lucia-auth.com/)
 - [Nx](https://nx.dev/)
 - [Lucide](https://lucide.dev/)
