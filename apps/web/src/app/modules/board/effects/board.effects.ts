@@ -188,7 +188,7 @@ export class BoardEffects {
 
   public refetchBoard$ = createEffect(() => {
     return this.actions$.pipe(
-      ofType(BoardPageActions.refetchBoard),
+      ofType(BoardPageActions.refetchBoard, BoardPageActions.userRoleChanged),
       concatLatestFrom(() => this.store.select(boardPageFeature.selectBoardId)),
       switchMap(([, boardId]) => {
         return this.boardApiService.getBoard(boardId).pipe(

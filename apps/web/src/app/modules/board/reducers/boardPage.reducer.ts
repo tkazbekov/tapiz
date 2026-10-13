@@ -436,11 +436,9 @@ const reducer = createReducer(
     },
   ),
   on(BoardPageActions.setBoardUsers, (state, { users }): BoardPageState => {
+    // isAdmin comes from fetchBoardSuccess: these roles leave out team admins
     return {
       ...state,
-      isAdmin: users.some(
-        (it) => it.role === 'admin' && it.id === state.userId,
-      ),
       boardUsers: users.toSorted((a, b) => {
         if (a.name < b.name) {
           return -1;
