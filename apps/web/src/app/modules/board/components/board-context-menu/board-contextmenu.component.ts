@@ -144,7 +144,8 @@ export class BoardContextMenuComponent implements OnInit {
             },
           ];
 
-          if (this.boardMode() === 0) {
+          // only board admins can move nodes between the board modes
+          if (this.isAdmin() && this.boardMode() === 0) {
             actions.unshift({
               label: 'Move to edit mode',
               icon: 'flip_to_back',
@@ -171,7 +172,7 @@ export class BoardContextMenuComponent implements OnInit {
                 );
               },
             });
-          } else {
+          } else if (this.isAdmin()) {
             actions.unshift({
               label: 'Move to participant mode',
               icon: 'flip_to_front',

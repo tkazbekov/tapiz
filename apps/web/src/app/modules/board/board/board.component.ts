@@ -8,6 +8,7 @@ import {
   inject,
   DestroyRef,
   computed,
+  effect,
   viewChild,
 } from '@angular/core';
 import { Store } from '@ngrx/store';
@@ -261,6 +262,14 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       sessionStorage.removeItem('new-board');
       this.store.dispatch(BoardPageActions.changeBoardMode({ boardMode: 1 }));
     }
+
+    // edit mode is for board admins; isAdmin is only known once the board
+    // has loaded, and a new board's creator starts in edit mode before that
+    effect(() => {
+      if (this.loaded() && this.boardMode() === 1 && !this.isAdmin()) {
+        this.store.dispatch(BoardPageActions.changeBoardMode({ boardMode: 0 }));
+      }
+    });
 
     this.wsService.reconnect$.pipe(takeUntilDestroyed()).subscribe(() => {
       const boardId = this.route.snapshot.paramMap.get('id');
