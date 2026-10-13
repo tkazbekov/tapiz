@@ -90,11 +90,9 @@ const teamBoard = async (name: string) => {
   return caller.board.create({ name, teamId: team.id });
 };
 
-const persisted = async (boardId: string) => {
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  return (await db.board.getBoard(boardId))?.board ?? [];
-};
+// the board as stored once the MCP client's final write has landed
+const persisted = async (server: Server, boardId: string) =>
+  (await server.readBoard(boardId)) ?? [];
 
 const layerOf = (node: TuNode | undefined) =>
   (node?.content as { layer?: number } | undefined)?.layer;
@@ -121,6 +119,7 @@ describe('insertTemplateAsMcpUser', () => {
   });
 
   it('inserts an admin layout behind existing notes, in template order', async () => {
+    const server = newServer();
     const admin = mcpUser(1);
     const board = await getUserCaller(1).board.create({
       name: 'layout admin',
@@ -134,12 +133,7 @@ describe('insertTemplateAsMcpUser', () => {
     ]);
 
     const data = template();
-    const result = await insertTemplateAsMcpUser(
-      newServer(),
-      admin,
-      board.id,
-      data,
-    );
+    const result = await insertTemplateAsMcpUser(server, admin, board.id, data);
 
     expect(result.status).toBe('applied');
     expect(result.rejected).toEqual([]);
@@ -149,7 +143,7 @@ describe('insertTemplateAsMcpUser', () => {
     expect(result.origin).toEqual({ x: 300 + 400, y: 0 });
     expect(result.lint.filter((it) => it.level === 'error')).toEqual([]);
 
-    const nodes = await persisted(board.id);
+    const nodes = await persisted(server, board.id);
     const ids = nodes.map((it) => it.id);
     const panelRefs = data.nodes
       .filter((it) => it.type === 'panel')
@@ -181,11 +175,12 @@ describe('insertTemplateAsMcpUser', () => {
   });
 
   it('moves a member layout to layer 0 with layer auto', async () => {
+    const server = newServer();
     const board = await teamBoard('layout member auto');
     const member = mcpUser(2);
 
     const result = await insertTemplateAsMcpUser(
-      newServer(),
+      server,
       member,
       board.id,
       template(),
@@ -194,7 +189,7 @@ describe('insertTemplateAsMcpUser', () => {
     expect(result.status).toBe('applied');
     expect(result.layerCoerced).toBe(true);
 
-    const nodes = await persisted(board.id);
+    const nodes = await persisted(server, board.id);
     const added = Object.values(result.refs).map((id) =>
       nodes.find((it) => it.id === id),
     );
@@ -203,12 +198,13 @@ describe('insertTemplateAsMcpUser', () => {
   });
 
   it('rejects asStored for a member and leaves the board unchanged', async () => {
+    const server = newServer();
     const board = await teamBoard('layout member asStored');
     const member = mcpUser(2);
     const before = (await db.board.getBoard(board.id))?.board ?? [];
 
     const result = await insertTemplateAsMcpUser(
-      newServer(),
+      server,
       member,
       board.id,
       template(),
@@ -225,7 +221,7 @@ describe('insertTemplateAsMcpUser', () => {
       }),
     ]);
 
-    const after = await persisted(board.id);
+    const after = await persisted(server, board.id);
 
     expect(after.filter((it) => it.type !== 'user')).toEqual(
       before.filter((it) => it.type !== 'user'),
@@ -233,6 +229,7 @@ describe('insertTemplateAsMcpUser', () => {
   });
 
   it('writes nothing in a dry run, not even a membership row', async () => {
+    const server = newServer();
     const board = await teamBoard('layout dry run');
     const member = mcpUser(2);
 
@@ -240,7 +237,7 @@ describe('insertTemplateAsMcpUser', () => {
 
     const data = template();
     const result = await insertTemplateAsMcpUser(
-      newServer(),
+      server,
       member,
       board.id,
       data,
@@ -258,10 +255,11 @@ describe('insertTemplateAsMcpUser', () => {
       layer: 0,
     });
     expect(await membershipRow(board.id, member.id)).toEqual([]);
-    expect(await persisted(board.id)).toEqual([]);
+    expect(await persisted(server, board.id)).toEqual([]);
   });
 
   it('rejects a member on a read-only board, dry run or not', async () => {
+    const server = newServer();
     const board = await teamBoard('layout read only');
     const member = mcpUser(2);
     const settings: TuNode = {
@@ -274,7 +272,7 @@ describe('insertTemplateAsMcpUser', () => {
 
     for (const dryRun of [true, false]) {
       const result = await insertTemplateAsMcpUser(
-        newServer(),
+        server,
         member,
         board.id,
         template(),
@@ -288,11 +286,12 @@ describe('insertTemplateAsMcpUser', () => {
     }
 
     expect(
-      (await persisted(board.id)).filter((it) => it.type !== 'user'),
+      (await persisted(server, board.id)).filter((it) => it.type !== 'user'),
     ).toEqual([settings]);
   });
 
   it('accepts the inserted notes while notes are hidden', async () => {
+    const server = newServer();
     const board = await teamBoard('layout notes hidden');
     const member = mcpUser(2);
 
@@ -303,7 +302,7 @@ describe('insertTemplateAsMcpUser', () => {
 
     const data = template();
     const result = await insertTemplateAsMcpUser(
-      newServer(),
+      server,
       member,
       board.id,
       data,
@@ -311,7 +310,7 @@ describe('insertTemplateAsMcpUser', () => {
 
     expect(result.status).toBe('applied');
 
-    const nodes = await persisted(board.id);
+    const nodes = await persisted(server, board.id);
 
     data.nodes
       .filter((it) => it.type === 'note')
@@ -349,18 +348,19 @@ describe('insertTemplateAsMcpUser', () => {
   });
 
   it('refuses a board the user cannot access', async () => {
+    const server = newServer();
     const board = await getUserCaller(1).board.create({
       name: 'layout private',
     });
 
     await expect(
-      insertTemplateAsMcpUser(newServer(), mcpUser(2), board.id, template(), {
+      insertTemplateAsMcpUser(server, mcpUser(2), board.id, template(), {
         dryRun: true,
       }),
     ).rejects.toThrow('Unable to read board');
     await expect(
-      insertTemplateAsMcpUser(newServer(), mcpUser(2), board.id, template()),
+      insertTemplateAsMcpUser(server, mcpUser(2), board.id, template()),
     ).rejects.toThrow('Unable to join board');
-    expect(await persisted(board.id)).toEqual([]);
+    expect(await persisted(server, board.id)).toEqual([]);
   });
 });
