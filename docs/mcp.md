@@ -106,13 +106,19 @@ Pass `includeBoard: false` to leave the board out of the result (default
 
 `create_layout`
 
-Creates a columns, grid or quadrants layout of panels with note slots in one
-call. See [Layouts](#layouts).
+Creates a columns, grid, quadrants or radial layout of panels with note slots,
+optionally styled and decorated with Cocomaterial art, in one call. See
+[Layouts](#layouts).
 
 `lint_board`
 
 Read-only. Checks the board, or only the nodes in `nodeIds`, for layout
 problems. See [Lint](#lint).
+
+`preview_board`
+
+Read-only. Renders the board, a rectangle or a set of nodes as a PNG on the
+server, as the token user sees it. See [Board preview](#board-preview).
 
 `get_user_settings`
 
@@ -221,7 +227,11 @@ Deletes a template. Boards it was inserted into keep their copies.
 `create_layout` turns a short spec into panels, header text and notes, sized
 around Tapiz's real `300x300` note, and inserts them in one batch. Use it
 for retrospectives, kanban lanes, brainstorm grids and 2x2 matrices instead of
-hand-building panels with `apply_board_actions`.
+hand-building panels with `apply_board_actions`. For themed retrospectives
+(a starfish, a sailboat, a movie night), arrange the cells in a ring with
+`radial`, give them a [style](#cell-style) and add
+[decorations](#decorations), then check the result with
+[`preview_board`](#board-preview).
 
 The code lives in `libs/board-commons/src/lib/layout/` (spec, expansion,
 presets, lint) and `apps/api/src/app/layout-service.ts` (insertion).
@@ -232,20 +242,50 @@ presets, lint) and `apps/api/src/app/layout-service.ts` (insertion).
 {
   boardId: string;
   layout: {
-    kind: 'columns' | 'grid' | 'quadrants';
+    kind: 'columns' | 'grid' | 'quadrants' | 'radial';
     title?: string; // display preset text above the cells
     description?: string; // caption preset text under the title
     cells: {
       title: string; // title preset in the panel header
       subtitle?: string; // caption preset under the title
       backgroundColor?: string; // #rrggbb panel background
+      style?: {
+        shape?: 'rect' | 'rounded' | 'pill';
+        backgroundColor?: string; // #rrggbb, wins over backgroundColor
+        borderColor?: string; // #rrggbb
+        borderWidth?: number; // 0-20
+        frameless?: boolean; // transparent, no border
+      };
       notes?: string[]; // seed notes, in reading order
-      capacity?: number; // note slots to reserve (default 6)
+      capacity?: number; // note slots to reserve (default 6, radial 4)
     }[];
     gridColumns?: number; // grid: cells per row (default about square)
     noteColumns?: number; // note columns per cell, 1-4 (default 2)
     axes?: { x?: [string, string]; y?: [string, string] }; // quadrants only
     noteColor?: string; // default: the user's note colour setting
+    decorations?: {
+      url: string; // https://cocomaterial.com/... only
+      anchor:
+        | 'center'
+        | 'behind'
+        | 'top-left'
+        | 'top-right'
+        | 'bottom-left'
+        | 'bottom-right'
+        | {
+            cell: number; // from 0
+            corner:
+              | 'top-left'
+              | 'top-right'
+              | 'bottom-left'
+              | 'bottom-right'
+              | 'center';
+          };
+      width: number;
+      height: number;
+      rotation?: number; // degrees, -360 to 360
+      offset?: { x: number; y: number }; // board pixels from the anchor
+    }[]; // at most 20
   };
   origin?: { x: number; y: number }; // top-left of the layout
   placement?: 'right' | 'below'; // without origin (default right)
@@ -261,6 +301,7 @@ presets, lint) and `apps/api/src/app/layout-service.ts` (insertion).
   `[top, bottom]`, left of the rows (for example
   `["High impact", "Low impact"]`), and `axes.x` is `[left, right]`, under
   the grid.
+- `radial` takes 2 to 8 cells on a ring; see [Radial](#radial).
 - A layout expands to at most 300 nodes; split bigger ones into several calls.
 
 Example, a 3-column retro:
@@ -279,6 +320,94 @@ Example, a 3-column retro:
   }
 }
 ```
+
+Example, a starfish retro around Cocomaterial art:
+
+```json
+{
+  "boardId": "…",
+  "layout": {
+    "kind": "radial",
+    "title": "Starfish retro",
+    "description": "Five arms, one sprint: what should we change?",
+    "cells": [
+      {
+        "title": "Keep doing",
+        "notes": ["Pairing on reviews"],
+        "style": { "shape": "rounded", "backgroundColor": "#e6f4ea" }
+      },
+      { "title": "More of", "style": { "shape": "rounded", "backgroundColor": "#e8f0fe" } },
+      { "title": "Start doing", "style": { "shape": "rounded", "backgroundColor": "#fef7e0" } },
+      { "title": "Stop doing", "style": { "shape": "rounded", "backgroundColor": "#fce8e6" } },
+      { "title": "Less of", "style": { "shape": "rounded", "backgroundColor": "#f3e8fd" } }
+    ],
+    "decorations": [
+      {
+        "url": "https://cocomaterial.com/media/sea_starfish_1.svg",
+        "anchor": "center",
+        "width": 600,
+        "height": 616
+      }
+    ]
+  }
+}
+```
+
+`LAYOUT_EXAMPLES` in `libs/board-commons/src/lib/layout/expand.ts` has this
+example and a movie-themed grid with corner stickers.
+
+### Radial
+
+- The cells sit evenly on a circle: the first at the top, the rest clockwise.
+- The radius is the smallest that keeps every pair of cells, and every cell
+  and the `center` decorations, at least `60px` apart. A larger centre
+  illustration (rotation and offset included) makes a larger ring.
+- The title and description sit above the ring and span its width.
+- Cells reserve 4 note slots by default (two rows of two), to keep the ring
+  compact.
+
+### Cell style
+
+- `shape`: `rect` (square corners), `rounded` (`24px`) or `pill` (half the
+  shorter side, at most `150px`). Without it, corners are `12px`.
+- `backgroundColor`, `borderColor` (`#rrggbb`) and `borderWidth` (`0`–`20`)
+  set the panel's look. `style.backgroundColor` wins over the cell's
+  `backgroundColor`.
+- `frameless: true` makes a transparent lane without a border (stored as
+  `backgroundColor: 'transparent'`, `borderWidth: 0`), for example a lane over
+  decoration art. It overrides the background and border width.
+- Panel `color` is never set: it would recolour the notes inside.
+
+### Decorations
+
+Decorations are Cocomaterial illustrations placed with the layout. Find art
+with `list_cocomaterial_tags` and `search_cocomaterial_vectors`, and use the
+`svg` url of a result. Each result has an `aspectRatio` (width / height of the
+art, `null` when unknown): give the decoration a `width` and `height` in that
+ratio, because the art is letterboxed inside its box.
+
+- `url` must be `https://cocomaterial.com/...` (no other host, port or user
+  info, at most 1000 characters). Anything else is rejected. `.svg` urls become
+  `vector` nodes, other urls `image` nodes, stored on layer `1` (layer `0` when
+  the layer policy coerces it).
+- The decoration's visual centre (rotation included) lands on its anchor plus
+  `offset`:
+  - `center`: the middle of the cells; for `radial`, the ring centre, and the
+    ring grows to fit it.
+  - `behind`: the same point, but below every panel.
+  - `top-left`, `top-right`, `bottom-left`, `bottom-right`: a sticker centred
+    on that corner of the whole layout, title and captions included.
+  - `{ cell, corner }`: a corner, or the `center`, of one cell, numbered from
+    `0` in the order of `cells`.
+- Order from back to front: `behind` decorations, panels, other decorations,
+  texts, notes. The layout title, description and axis captions stay above the
+  art, and notes stay on top. A cell's header title is panel text, so a
+  sticker on a cell's top corner can cover it; prefer a bottom corner, or an
+  `offset` that moves the sticker outward.
+- On insert, `behind` decorations go just below the new panels and other
+  decorations on top of the board, so the board keeps this order.
+- Decorations count in the layout's bounds, so `origin` and placement account
+  for them.
 
 ### Sizing
 
@@ -409,6 +538,83 @@ blocks a write. Text heights are estimates, so confirm in the browser.
 | `panel_color_recolors_notes` | warning | A panel with `color` contains notes, whose own colour it overrides.          |
 | `overlaps_existing`          | warning | Inserted nodes overlap content that was already on the board (inserts only). |
 | `dangling_attachment`        | warning | An arrow is attached to a node that does not exist.                          |
+
+## Board preview
+
+`preview_board` renders a board to a PNG on the server, with
+[resvg](https://github.com/yisibl/resvg-js) and no browser. Call it after
+`create_layout`, `insert_template` or hand-built edits, especially freeform or
+artistic ones, look at the image and iterate.
+
+```ts
+preview_board({
+  boardId: string;
+  region?: // default 'content'
+    | 'content' // every positioned node, plus an 80px margin
+    | { x: number; y: number; width: number; height: number } // board rectangle, within ±10,000,000
+    | { nodeIds: string[] }; // 1-500 ids (e.g. create_layout refs), plus an 80px margin
+  width?: number; // image width in pixels, 400-1600 (default 1200)
+}) => [
+  { type: 'image', mimeType: 'image/png', data: string }, // base64
+  {
+    type: 'text',
+    text: JSON<{
+      region: Rect | null; // board coordinates of the image
+      scale?: number; // image pixels per board unit
+      image?: { width: number; height: number };
+      nodeCount: number; // top-level nodes drawn
+      skippedAssets: { url: string; reason: string }[];
+      missingNodeIds?: string[]; // nodeIds that are not on the board
+      message?: string; // why there is no image
+    }>,
+  },
+]
+```
+
+- An empty board, or a region with nothing in it, returns only the text
+  legend, with a `message`.
+- The image is never taller than `4800px`: a tall region renders narrower than
+  `width`, and `scale` says by how much. A board position is
+  `region.x + pixelX / scale`. A region so thin that it would be under a pixel
+  wide (or tall) at that scale, such as `content` stretched by one far-away
+  node, returns only the legend with a `message`; preview a rectangle or
+  `nodeIds` instead.
+- It renders the board as the token user sees it: while notes are hidden,
+  other users' notes are blank cards, and a note whose text its owner hid shows
+  only to that owner.
+- Panels (fill, border, radius, header text), notes (colour, or the colour of
+  the panel holding them as in the editor, and wrapped text at the note's
+  auto-shrink size), text, groups, arrows (curved ends leave the side they are
+  attached to), drawings, vectors and images are drawn in board order,
+  rotation included. Text sizes follow the editor closely, not exactly; text
+  that does not fit a note or panel is cut at a whole line. Confirm fine
+  detail in the browser.
+- Only `https://cocomaterial.com` art is fetched, the same host rule as layout
+  decorations (5 s timeout, 2 MB, no redirects, at most 60 new fetches per
+  render, an in-memory cache keyed without the query string). Every other
+  image, uploads included, is a labelled placeholder box, and is listed in
+  `skippedAssets` with a reason: `not a https cocomaterial.com url`,
+  `redirect`, `http <status>`, `content-type <mime>`, `too large`, `empty`,
+  `timeout`, `fetch failed`, `too many assets` or `could not be rendered` (art
+  the renderer failed on, drawn as a placeholder instead).
+- resvg runs in a short-lived child process, at most two at a time with a
+  short queue (and two previews in flight per user), and is stopped after
+  20 s, so a crash or a slow render fails only that call. A busy server
+  answers with a tool error; try again shortly. Very long texts are cut before
+  rendering.
+- A wrong region (under `1x1` board units) or a board the token cannot read is
+  a tool error.
+
+### Fonts
+
+resvg draws text with the system fonts, trying Inter (the web app's font)
+first and falling back to DejaVu Sans; without any font installed, text is
+missing from the image. Line wrapping assumes Inter's widths: with only DejaVu
+Sans, which is wider, the preview can cut words that fit in the browser. The
+API Docker image (`apps/api/Dockerfile.api`) installs `fonts-inter` and
+`fonts-dejavu-core`. When you self-host the API another way, install them too,
+for example `apt-get install fonts-inter fonts-dejavu-core` on Debian or
+Ubuntu.
 
 ## Templates
 
@@ -557,12 +763,16 @@ Create a fun retrospective:
 1. Call `get_board` to see `viewer` and `contentBounds`.
 2. Call `create_layout` with the columns and seed notes (try `dryRun: true`
    first to check `lint`).
-3. Call `list_cocomaterial_tags` and `search_cocomaterial_vectors` for
-   relevant assets.
-4. Call `add_cocomaterial_asset` for decorations, outside the cells.
+3. For a themed retro, call `list_cocomaterial_tags` and
+   `search_cocomaterial_vectors` for relevant art, and pass it to
+   `create_layout` as `decorations` (or use `add_cocomaterial_asset` for art
+   placed by hand, outside the cells). Try `kind: 'radial'` around a centre
+   illustration, and cell `style` for shapes and colours.
+4. Call `preview_board` and look at the image; adjust the layout or the
+   decorations and preview again until it looks right.
 5. Call `apply_board_actions` to add more notes at the cells' `freeSlots`.
-6. Open the board in a browser and verify the actual rendered result. Rich text
-   can render much larger than its node box if you use raw heading tags.
+6. Open the board in a browser to confirm the final result. Rich text can
+   render much larger than its node box if you use raw heading tags.
 
 Reuse a layout on other boards:
 
@@ -631,6 +841,8 @@ validation.
 - Note text renders black and notes may expose footer/author UI, so use light
   high-contrast note colors and make notes tall enough that the content does not
   collide with footer text.
+- Call `preview_board` after creating or editing a layout, especially a
+  freeform or decorated one, and iterate on what the image shows.
 - Verify in the web app with Playwright after MCP writes. Check at least the
   visible text, bounding boxes, and a screenshot. If the browser redirects to
   login locally, create a real local session for verification instead of relying
@@ -670,6 +882,6 @@ Run focused API checks after changing MCP code:
 
 ```shell
 pnpm exec nx typecheck api
-pnpm exec nx test api -- --run src/app/mcp.spec.ts src/app/layout-service.spec.ts
+pnpm exec nx test api -- --run src/app/mcp.spec.ts src/app/layout-service.spec.ts src/app/board-preview.spec.ts
 pnpm exec nx lint api
 ```

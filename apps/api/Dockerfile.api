@@ -22,6 +22,12 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
 
+# fonts for the server-side board preview (resvg): Inter as in the web app,
+# DejaVu as the fallback
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fonts-inter fonts-dejavu-core \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /home/tapiz
 
 COPY ./drizzle /home/tapiz/drizzle

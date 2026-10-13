@@ -52,6 +52,7 @@
     "@ngrx/router-store": "22.0.1",
     "@ngrx/signals": "22.0.1",
     "@ngrx/store": "22.0.1",
+    "@resvg/resvg-js": "2.6.2",
     "@simonwep/pickr": "^1.10.2",
     "@tiptap/core": "3.31.4",
     "@tiptap/extension-bold": "3.31.4",

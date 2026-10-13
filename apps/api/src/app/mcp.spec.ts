@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { Socket, Server as WsServer } from 'socket.io';
 import { vi } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm';
-import type { StateActions, TuNode } from '@tapiz/board-commons';
+import {
+  LAYOUT_EXAMPLES,
+  type Rect,
+  type StateActions,
+  type TuNode,
+} from '@tapiz/board-commons';
 import { startDB } from './db/init-db.js';
 import db from './db/index.js';
 import { addTeamMember } from './db/user-db.js';
@@ -12,15 +17,21 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
   applyBoardActionsAsMcpUser,
   compactBoardNodes,
+  compactCocomaterialVector,
   createCocomaterialNodeAction,
   createTapizMcpServer,
   hideQueryDetails,
   lintBoardAsMcpUser,
   readBoardAsMcpUser,
+  svgAspectRatio,
   TAPIZ_MCP_INSTRUCTIONS,
 } from './mcp.js';
 import { Server } from './server.js';
 import { TemplateError } from './template-service.js';
+import {
+  buildBoardPreviewSvg,
+  clearPreviewAssetCache,
+} from './board-preview.js';
 import {
   createMultipleUsers,
   deleteTestBoards,
@@ -695,6 +706,318 @@ describe('mcp', () => {
       expect(description).not.toContain('[low, high]');
     });
 
+    it('creates an artistic radial layout without lint issues', async () => {
+      const board = await getUserCaller(1).board.create({
+        name: 'mcp radial layout',
+      });
+      const server = newServer();
+      const admin = mcpUser(1);
+      const sticker = 'https://cocomaterial.com/media/food_popcorn.svg';
+
+      const created = await callToolAs(server, admin, 'create_layout', {
+        boardId: board.id,
+        layout: {
+          ...LAYOUT_EXAMPLES.starfish,
+          cells: LAYOUT_EXAMPLES.starfish.cells.map((cell, index) =>
+            index === 1 ? { ...cell, style: { frameless: true } } : cell,
+          ),
+          decorations: [
+            ...LAYOUT_EXAMPLES.starfish.decorations,
+            { url: sticker, anchor: 'top-right', width: 200, height: 200 },
+            {
+              url: sticker,
+              anchor: { cell: 2, corner: 'bottom-left' },
+              width: 120,
+              height: 120,
+              rotation: 15,
+            },
+          ],
+        },
+        origin: { x: 0, y: 0 },
+      });
+
+      expect(created.status).toBe('applied');
+      expect(created.lint).toEqual([]);
+      expect(created.cells).toHaveLength(5);
+
+      const nodes = await persisted(board.id);
+      const vectors = nodes.filter((it) => it.type === 'vector');
+
+      expect(vectors.map((it) => it.content)).toEqual([
+        expect.objectContaining({
+          url: LAYOUT_EXAMPLES.starfish.decorations[0].url,
+          layer: 1,
+        }),
+        expect.objectContaining({ url: sticker, layer: 1 }),
+        expect.objectContaining({ url: sticker, layer: 1, rotation: 15 }),
+      ]);
+      expect(
+        nodes.find((it) => it.id === created.cells[1].panelId)?.content,
+      ).toMatchObject({ backgroundColor: 'transparent', borderWidth: 0 });
+
+      const lint = await callToolAs(server, admin, 'lint_board', {
+        boardId: board.id,
+      });
+
+      expect(lint.counts).toEqual({ error: 0, warning: 0 });
+
+      // a decoration from another host never reaches the board
+      await expect(
+        callToolAs(server, admin, 'create_layout', {
+          boardId: board.id,
+          layout: {
+            ...LAYOUT_EXAMPLES.starfish,
+            decorations: [
+              {
+                url: 'https://cocomaterial.com.evil.com/a.svg',
+                anchor: 'center',
+                width: 100,
+                height: 100,
+              },
+            ],
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    describe('preview_board', () => {
+      const starfishSvg =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#f90"/></svg>';
+      const callPreview = async (
+        server: Server,
+        user: ReturnType<typeof mcpUser>,
+        args: Record<string, unknown>,
+      ) => {
+        const [clientTransport, serverTransport] =
+          InMemoryTransport.createLinkedPair();
+        const client = new McpClient({ name: 'test', version: '0.0.0' });
+
+        await createTapizMcpServer(server, user).connect(serverTransport);
+        await client.connect(clientTransport);
+
+        const result = await client.callTool({
+          name: 'preview_board',
+          arguments: args,
+        });
+
+        await client.close();
+
+        return result as {
+          isError?: boolean;
+          content: (
+            | { type: 'text'; text: string }
+            | { type: 'image'; data: string; mimeType: string }
+          )[];
+        };
+      };
+      const legendOf = (result: Awaited<ReturnType<typeof callPreview>>) => {
+        const text = result.content.find((it) => it.type === 'text');
+
+        return JSON.parse((text as { text: string }).text);
+      };
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+        clearPreviewAssetCache();
+      });
+
+      it('renders a radial layout as a PNG', async () => {
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+          async () =>
+            new Response(starfishSvg, {
+              headers: { 'content-type': 'image/svg+xml' },
+            }),
+        );
+        const board = await getUserCaller(1).board.create({
+          name: 'mcp preview',
+        });
+        const server = newServer();
+        const admin = mcpUser(1);
+
+        const empty = await callPreview(server, admin, { boardId: board.id });
+
+        expect(empty.isError).toBeFalsy();
+        expect(empty.content.map((it) => it.type)).toEqual(['text']);
+        expect(legendOf(empty)).toMatchObject({
+          region: null,
+          nodeCount: 0,
+          message: expect.stringContaining('empty'),
+        });
+
+        const created = await callToolAs(server, admin, 'create_layout', {
+          boardId: board.id,
+          layout: LAYOUT_EXAMPLES.starfish,
+          origin: { x: 0, y: 0 },
+        });
+
+        expect(created.status).toBe('applied');
+
+        // the closed MCP client flushes the board to the database
+        await persisted(board.id);
+
+        const result = await callPreview(server, admin, {
+          boardId: board.id,
+          width: 600,
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.content.map((it) => it.type)).toEqual(['image', 'text']);
+
+        const image = result.content[0] as { data: string; mimeType: string };
+        const png = Buffer.from(image.data, 'base64');
+
+        expect(image.mimeType).toBe('image/png');
+        expect([...png.subarray(0, 8)]).toEqual([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ]);
+
+        const legend = legendOf(result);
+
+        expect(legend).toMatchObject({
+          region: {
+            x: created.bounds.x - 80,
+            y: created.bounds.y - 80,
+            width: created.bounds.width + 160,
+            height: created.bounds.height + 160,
+          },
+          nodeCount: created.nodeCount,
+          skippedAssets: [],
+          image: { width: 600 },
+        });
+        expect(legend.scale).toBeCloseTo(600 / legend.region.width);
+        expect(fetchSpy).toHaveBeenCalledWith(
+          LAYOUT_EXAMPLES.starfish.decorations[0].url,
+          expect.anything(),
+        );
+
+        // one cell and a margin
+        const cell = created.cells[0];
+        const one = legendOf(
+          await callPreview(server, admin, {
+            boardId: board.id,
+            region: { nodeIds: [cell.panelId, 'missing-node'] },
+          }),
+        );
+
+        expect(one.region).toEqual({
+          x: cell.bounds.x - 80,
+          y: cell.bounds.y - 80,
+          width: cell.bounds.width + 160,
+          height: cell.bounds.height + 160,
+        });
+        expect(one.missingNodeIds).toEqual(['missing-node']);
+
+        // an empty rectangle draws nothing
+        const away = await callPreview(server, admin, {
+          boardId: board.id,
+          region: { x: -50000, y: -50000, width: 1000, height: 1000 },
+        });
+
+        expect(away.content.map((it) => it.type)).toEqual(['text']);
+        expect(legendOf(away).nodeCount).toBe(0);
+
+        const invalid = await callPreview(server, admin, {
+          boardId: board.id,
+          region: { x: 0, y: 0, width: 0, height: 10 },
+        });
+
+        expect(invalid.isError).toBe(true);
+
+        // under a pixel wide at the height cap: a message, not a render
+        const thin = await callPreview(server, admin, {
+          boardId: board.id,
+          region: { x: 0, y: 0, width: 1, height: 1e7 },
+        });
+
+        expect(thin.isError).toBeFalsy();
+        expect(thin.content.map((it) => it.type)).toEqual(['text']);
+        expect(legendOf(thin).message).toContain('too thin');
+
+        const sliver = await callPreview(server, admin, {
+          boardId: board.id,
+          region: { x: 10, y: 0, width: 0.001, height: 1e7 },
+        });
+
+        expect(sliver.isError).toBe(true);
+
+        const huge = await callPreview(server, admin, {
+          boardId: board.id,
+          region: { x: -1e300, y: 0, width: 1e300, height: 10 },
+        });
+
+        expect(huge.isError).toBe(true);
+      });
+
+      it('keeps hidden notes of others out of the image', async () => {
+        const board = await getUserCaller(1).board.create({
+          name: 'mcp preview hidden',
+        });
+        const user = mcpUser(1);
+        const secret = 'secret of another user';
+
+        await db.board.updateBoard(board.id, [
+          {
+            id: randomUUID(),
+            type: 'settings',
+            content: { notesHidden: true },
+          },
+          {
+            ...(noteAction(randomUUID(), getAuth(2).sub).data as TuNode),
+            content: {
+              ...((noteAction(randomUUID(), getAuth(2).sub).data as TuNode)
+                .content as object),
+              text: `<p>${secret}</p>`,
+            },
+          } as TuNode,
+          {
+            ...(noteAction(randomUUID(), user.id).data as TuNode),
+            content: {
+              ...((noteAction(randomUUID(), user.id).data as TuNode)
+                .content as object),
+              position: { x: 400, y: 400 },
+              text: '<p>mine</p>',
+            },
+          } as TuNode,
+        ]);
+
+        const read = await readBoardAsMcpUser(newServer(), user, board.id);
+        const svg = buildBoardPreviewSvg(
+          read.nodes,
+          read.contentBounds as Rect,
+          { width: 800, assets: new Map(), viewerId: user.id },
+        );
+
+        expect(svg).toContain('>mine<');
+        expect(svg).not.toContain(secret);
+
+        const result = await callPreview(newServer(), user, {
+          boardId: board.id,
+        });
+
+        expect(result.content[0].type).toBe('image');
+        expect(JSON.stringify(result)).not.toContain(secret);
+      });
+
+      it('rejects a board without access', async () => {
+        const foreign = await getUserCaller(3).board.create({
+          name: 'mcp preview foreign',
+        });
+
+        await db.board.updateBoard(foreign.id, [
+          noteAction(randomUUID(), getAuth(3).sub).data as TuNode,
+        ]);
+
+        const result = await callPreview(newServer(), mcpUser(1), {
+          boardId: foreign.id,
+        });
+
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain(
+          'Unable to read board',
+        );
+      });
+    });
+
     it('lints overlapping notes on a hand-built board', async () => {
       const board = await getUserCaller(1).board.create({
         name: 'mcp lint board',
@@ -1027,6 +1350,48 @@ describe('mcp', () => {
           rotation: 0,
         },
       },
+    });
+  });
+
+  it('reports the aspect ratio of Cocomaterial art', () => {
+    expect(
+      svgAspectRatio(
+        '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="469.47537mm" height="145.77315mm" viewBox="0 0 469.47537 145.77315"><g stroke-width="2"/></svg>',
+      ),
+    ).toBe(3.221);
+    expect(
+      svgAspectRatio('<svg stroke-width="9" width="200px" height="100px">'),
+    ).toBe(2);
+    expect(svgAspectRatio("<svg viewBox='0,0,50,100'>")).toBe(0.5);
+    expect(svgAspectRatio('<svg viewBox="0 0 0 10">')).toBeNull();
+    expect(svgAspectRatio('')).toBeNull();
+    expect(svgAspectRatio(null)).toBeNull();
+
+    expect(
+      compactCocomaterialVector({
+        id: 1,
+        name: 'whale',
+        tags: 'sea',
+        url: 'https://cocomaterial.com/vectors/1',
+        svg: 'https://cocomaterial.com/media/whale.svg',
+        svgContent: '<svg viewBox="0 0 300 100"></svg>',
+        gif: null,
+        coloredSvg: null,
+        coloredSvgContent: '',
+        coloredGif: null,
+        fillColor: null,
+        strokeColor: null,
+      }),
+    ).toEqual({
+      id: 1,
+      name: 'whale',
+      tags: 'sea',
+      url: 'https://cocomaterial.com/vectors/1',
+      svg: 'https://cocomaterial.com/media/whale.svg',
+      gif: null,
+      coloredSvg: null,
+      coloredGif: null,
+      aspectRatio: 3,
     });
   });
 

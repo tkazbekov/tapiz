@@ -13,16 +13,22 @@ import {
   expandLayout,
   isNotesHidden,
   isSettings,
+  LAYOUT_EXAMPLES,
   LAYOUT_SIZES,
   layoutSpecSchema,
   lintNodes,
   maskNodesForViewer,
+  MAX_LAYOUT_DECORATIONS,
+  nodeBounds,
+  nodesById,
   presetHtml,
+  type Rect,
   type StateActions,
   TEMPLATE_LIMITS,
   TEXT_PRESETS,
   type TextPreset,
   type TuNode,
+  unionRects,
   withDefaultUserSettings,
 } from '@tapiz/board-commons';
 import { Client } from './client.js';
@@ -32,6 +38,12 @@ import { authenticateApiToken } from './authenticate-api-token.js';
 import { logError } from './log-error.js';
 import type { ActionRejection } from './validation.js';
 import { insertTemplateAsMcpUser } from './layout-service.js';
+import {
+  MIN_PREVIEW_REGION,
+  previewImageSize,
+  previewNodes,
+  renderBoardPreview,
+} from './board-preview.js';
 import {
   deleteTemplateAsUser,
   getTemplateWithData,
@@ -164,7 +176,10 @@ const TEMPLATE_GUIDANCE =
   'To reuse a finished layout, save it with save_board_as_template (nodeIds = the refs values create_layout returned, or omit them for the whole board) and place copies on any board with insert_template; list_templates and get_template show the personal and team templates the user can read. Inserted copies get fresh ids, notes owned by the API token user with votes and emojis cleared, and the same layer policies and placement as create_layout.';
 
 const LAYOUT_GUIDANCE =
-  'For lanes, columns, kanban boards, grids and 2x2 quadrants (retrospectives, brainstorms, prioritisation matrices), call create_layout instead of hand-building panels: it sizes every panel around 300x300 note slots, keeps notes below the header band, never sets panel color, places the layout next to the existing content, chooses layers for the user, and returns freeSlots (top-left positions of empty note slots) for follow-up notes. Use lint_board to check hand-built layouts.';
+  'For lanes, columns, kanban boards, grids, 2x2 quadrants and rings of cells (retrospectives, brainstorms, prioritisation matrices, starfish retros), call create_layout instead of hand-building panels: it sizes every panel around 300x300 note slots, keeps notes below the header band, never sets panel color, places the layout next to the existing content, chooses layers for the user, and returns freeSlots (top-left positions of empty note slots) for follow-up notes. For themed retros (a starfish, a sailboat, a movie night), use kind "radial" around a centre illustration, per-cell style (shapes, colours, borders, frameless lanes over art) and decorations with Cocomaterial art found with search_cocomaterial_vectors. Use lint_board to check hand-built layouts.';
+
+const PREVIEW_GUIDANCE =
+  'preview_board renders the board, a region or a set of nodes as a PNG image on the server, as the user would see it. Call it after creating or editing a layout, especially freeform or artistic ones (decorations, radial rings, hand-placed art), look at the image and iterate: move or resize what overlaps, is clipped or looks unbalanced, then preview again.';
 
 export const TAPIZ_MCP_INSTRUCTIONS = [
   'Tapiz is an infinite collaborative board. Read the board before editing existing content.',
@@ -177,8 +192,9 @@ export const TAPIZ_MCP_INSTRUCTIONS = [
   'Do not set panel content.color for lanes that contain notes unless you intentionally want to recolor every note inside that panel. Tapiz notes inside a panel use the panel color instead of their own note color.',
   'Note text renders black and notes can show an author/footer area, so use light high-contrast note colors and make notes tall enough that content is not hidden by footer UI.',
   `For compact labels in text or panel nodes, avoid raw h1/h2/h3 rich-text tags because Tapiz canvas heading styles render very large. Use paragraph/span markup with explicit font-size and line-height, bold through <strong>, for example ${PRESET_EXAMPLE} (text presets: ${PRESET_TABLE}).`,
-  'After creating a layout, verify it in the web app with Playwright or a browser: check visible text, bounding boxes, layering, and console warnings.',
+  'After creating a layout, verify it in the web app with Playwright or a browser: check visible text, bounding boxes, layering, and console warnings; without a browser, call preview_board for a rendered image and iterate on what you see.',
   LAYOUT_GUIDANCE,
+  PREVIEW_GUIDANCE,
   TEMPLATE_GUIDANCE,
   'Write tools validate a batch in order, so later actions can patch, remove or comment on nodes added earlier in the same batch. A batch is all-or-nothing: the result status is applied or rejected (a read-only board rejects every non-user action with code read_only), and rejected lists each failed action with index, code, message and a hint on how to fix it. get_board returns viewer (userId, isAdmin, readOnly, notesHidden) and a compact format for layout work.',
 ].join(' ');
@@ -207,13 +223,43 @@ const INSERT_TEMPLATE_DESCRIPTION = [
 ].join(' ');
 
 const CREATE_LAYOUT_DESCRIPTION = [
-  'Create a ready-made layout of labelled panels with 300x300 note slots in one call: kind "columns" (lanes side by side, at most 12), "grid" (gridColumns per row, default about square) or "quadrants" (exactly 4 cells: top-left, top-right, bottom-left, bottom-right, with optional axes captions in reading order: { x: [left, right], y: [top, bottom] }, e.g. y: ["High impact", "Low impact"] puts high impact on the top row).',
-  `Sizing is automatic: each cell holds noteColumns (default 2, max 4) columns of ${NOTE}x${NOTE} notes, ${SLOT_GAP}px apart, inside ${PAD}px padding, so a cell is ${2 * PAD} + n*${NOTE} + (n-1)*${SLOT_GAP} wide; the header band fits the title and subtitle; every cell has the same size, room for at least capacity notes (default 6) and always at least one empty row after the seed notes. Cell notes are seeded as notes in reading order; title and description become text above the cells.`,
-  "Panels never get a color (it would recolour the notes inside); set backgroundColor for a tinted lane. Notes use noteColor, or else the user's default note colour.",
-  'origin is the board position of the layout\'s top-left; without it the layout goes 400px right of (placement "right") or below (placement "below") the existing content. layer "auto" (default): board admins get the panels and texts on layer 1, with the panels inserted behind existing notes, anyone else gets everything on layer 0 (layerCoerced: true); "asStored" keeps panels on layer 1 and is rejected for users who are not board admins. dryRun: true writes nothing and reports where every node would go.',
-  "Returns { status: applied | dry_run | rejected, origin, bounds, nodeCount, layerCoerced, refs (template ref -> node id), lint (advisory issues), rejected, nodes (dry run only), cells: [{ ref, title, panelId, bounds, noteIds, freeSlots }] } in board coordinates. To add notes later, put 300x300 notes at a cell's freeSlots positions (top-left corners) on layer 0 with apply_board_actions.",
+  'Create a ready-made layout of labelled panels with 300x300 note slots in one call: kind "columns" (lanes side by side, at most 12), "grid" (gridColumns per row, default about square), "quadrants" (exactly 4 cells: top-left, top-right, bottom-left, bottom-right, with optional axes captions in reading order: { x: [left, right], y: [top, bottom] }, e.g. y: ["High impact", "Low impact"] puts high impact on the top row) or "radial" (2 to 8 cells on a ring, the first at the top and the rest clockwise, around the centre decorations; the ring grows so no cell overlaps another or the centre art).',
+  `Sizing is automatic: each cell holds noteColumns (default 2, max 4) columns of ${NOTE}x${NOTE} notes, ${SLOT_GAP}px apart, inside ${PAD}px padding, so a cell is ${2 * PAD} + n*${NOTE} + (n-1)*${SLOT_GAP} wide; the header band fits the title and subtitle; every cell has the same size, room for at least capacity notes (default 6, radial 4) and always at least one empty row after the seed notes. Cell notes are seeded as notes in reading order; title and description become text above the cells.`,
+  "Panels never get a color (it would recolour the notes inside). Per-cell style: { shape: rect | rounded | pill, backgroundColor, borderColor (#rrggbb), borderWidth (0-20), frameless (a transparent lane without a border, e.g. over art) }; style.backgroundColor wins over the older cell backgroundColor. Notes use noteColor, or else the user's default note colour.",
+  `decorations (at most ${MAX_LAYOUT_DECORATIONS}): Cocomaterial illustrations placed with the layout, { url, anchor, width, height, rotation?, offset?: { x, y } }. url must be an https://cocomaterial.com/... asset url, usually the svg field of a search_cocomaterial_vectors result (list_cocomaterial_tags for tags); other hosts are rejected. .svg urls become vector nodes, anything else an image node. anchor: "center" (the middle of the cells; radial: the ring centre, sized into the ring), "behind" (the middle of the cells, below every panel), "top-left" | "top-right" | "bottom-left" | "bottom-right" (a sticker centred on that corner of the whole layout, title included) or { cell, corner } (a corner, or "center", of one cell, cells numbered from 0). offset moves it from the anchor in board pixels; width and height should follow the art's aspectRatio from search_cocomaterial_vectors. Decorations count in the layout bounds; the layout title, description and axis captions stay above them, but a sticker on a cell's top corner can cover that cell's header title, so prefer a bottom corner or an offset that moves it outward.`,
+  'origin is the board position of the layout\'s top-left; without it the layout goes 400px right of (placement "right") or below (placement "below") the existing content. layer "auto" (default): board admins get the panels, texts and decorations on layer 1, with the panels inserted behind existing notes, anyone else gets everything on layer 0 (layerCoerced: true); "asStored" keeps them on layer 1 and is rejected for users who are not board admins. dryRun: true writes nothing and reports where every node would go.',
+  "Returns { status: applied | dry_run | rejected, origin, bounds, nodeCount, layerCoerced, refs (template ref -> node id), lint (advisory issues), rejected, nodes (dry run only), cells: [{ ref, title, panelId, bounds, noteIds, freeSlots }] } in board coordinates. To add notes later, put 300x300 notes at a cell's freeSlots positions (top-left corners) on layer 0 with apply_board_actions. Check the result with preview_board.",
   'Example, a 3-column retro: { "boardId": "…", "layout": { "kind": "columns", "title": "Sprint 42 retro", "cells": [ { "title": "Went well", "notes": ["Pairing on the API", "Fast reviews"] }, { "title": "To improve", "notes": ["Flaky e2e tests", "Late scope changes"] }, { "title": "Actions", "subtitle": "Owner and date", "notes": ["Fix the e2e flakes", "Freeze scope on Wednesday"] } ] } }.',
+  `Example, a starfish retro around Cocomaterial art: { "boardId": "…", "layout": ${JSON.stringify(LAYOUT_EXAMPLES.starfish)} }.`,
   `Text presets used for headers, for hand-built text too: ${PRESET_TABLE}. Markup example: ${PRESET_EXAMPLE}.`,
+].join(' ');
+
+const PREVIEW_MAX_COORD = 10_000_000;
+
+const previewRegionSchema = z
+  .union([
+    z.literal('content'),
+    // bounded so an absurd rectangle can't reach the renderer
+    z.object({
+      x: z.number().min(-PREVIEW_MAX_COORD).max(PREVIEW_MAX_COORD),
+      y: z.number().min(-PREVIEW_MAX_COORD).max(PREVIEW_MAX_COORD),
+      width: z.number().min(MIN_PREVIEW_REGION).max(PREVIEW_MAX_COORD),
+      height: z.number().min(MIN_PREVIEW_REGION).max(PREVIEW_MAX_COORD),
+    }),
+    z.object({
+      nodeIds: z.array(z.string().min(1).max(255)).min(1).max(500),
+    }),
+  ])
+  .default('content')
+  .describe(
+    '"content": every positioned node plus an 80px margin; { x, y, width, height }: a board rectangle; { nodeIds }: these nodes (e.g. the refs values create_layout returned) plus an 80px margin',
+  );
+
+const PREVIEW_BOARD_DESCRIPTION = [
+  "Render a board, a board rectangle or a set of nodes as a PNG image on the server, as the API token user sees it (while notes are hidden, other users' notes are blank cards). Use it to check a layout after create_layout, insert_template or hand-built edits, especially freeform or artistic ones, and iterate on what you see.",
+  'The image is width pixels wide (400-1600, default 1200) and at most 4800 pixels tall; a tall region renders narrower, and a region too thin to draw at that size (e.g. content stretched by one far-away node) returns only the legend with a message: preview a rectangle or nodeIds instead. Panels, notes, text, groups, arrows, drawings, vectors and images are drawn in board order with their rotation; text sizes follow the editor closely but not exactly.',
+  'Only https://cocomaterial.com art is fetched; other images (uploads included) are labelled placeholder boxes and listed in skippedAssets with a reason.',
+  'Returns an image item and a text legend { region (board coordinates of the image), scale (image pixels per board unit), image: { width, height }, nodeCount, skippedAssets: [{ url, reason }], missingNodeIds }; board position = region.x + pixel x / scale. An empty board or region returns only the legend, with a message.',
 ].join(' ');
 
 class McpSocket {
@@ -320,7 +366,42 @@ async function fetchCocomaterial<T>(path: string) {
   return (await response.json()) as T;
 }
 
-function compactCocomaterialVector(vector: CocomaterialApiVector) {
+const SVG_TAG_RE = /<svg\b[^>]*>/i;
+
+const svgAttr = (tag: string, name: string) =>
+  new RegExp(`\\s${name}\\s*=\\s*["']([^"']*)["']`, 'i').exec(tag)?.[1];
+
+/**
+ * width / height of an svg from its root viewBox, else its width and height
+ * attributes (any unit); null when neither gives a positive size.
+ */
+export function svgAspectRatio(svg: string | null | undefined): number | null {
+  const tag = svg ? SVG_TAG_RE.exec(svg)?.[0] : undefined;
+
+  if (!tag) {
+    return null;
+  }
+
+  const viewBox = svgAttr(tag, 'viewBox')
+    ?.trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const [width, height] =
+    viewBox?.length === 4
+      ? viewBox.slice(2)
+      : [svgAttr(tag, 'width'), svgAttr(tag, 'height')].map((it) =>
+          parseFloat(it ?? ''),
+        );
+
+  return Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width > 0 &&
+    height > 0
+    ? Math.round((width / height) * 1000) / 1000
+    : null;
+}
+
+export function compactCocomaterialVector(vector: CocomaterialApiVector) {
   return {
     id: vector.id,
     name: vector.name,
@@ -330,6 +411,7 @@ function compactCocomaterialVector(vector: CocomaterialApiVector) {
     gif: vector.gif,
     coloredSvg: vector.coloredSvg,
     coloredGif: vector.coloredGif,
+    aspectRatio: svgAspectRatio(vector.svgContent),
   };
 }
 
@@ -496,6 +578,148 @@ export async function lintBoardAsMcpUser(
     },
     contentBounds,
     ...(missingNodeIds.length ? { missingNodeIds } : {}),
+  };
+}
+
+const PREVIEW_PADDING = 80;
+// renders are queued globally too (preview-renderer.ts)
+const MAX_PREVIEWS_PER_USER = 2;
+const previewsInFlight = new Map<string, number>();
+
+export type PreviewRegion = 'content' | Rect | { nodeIds: string[] };
+
+export interface PreviewLegend {
+  // board coordinates the image shows
+  region: Rect | null;
+  // image pixels per board unit
+  scale?: number;
+  image?: { width: number; height: number };
+  nodeCount: number;
+  skippedAssets: { url: string; reason: string }[];
+  missingNodeIds?: string[];
+  message?: string;
+}
+
+const padRect = (rect: Rect, pad: number): Rect => ({
+  x: rect.x - pad,
+  y: rect.y - pad,
+  width: rect.width + 2 * pad,
+  height: rect.height + 2 * pad,
+});
+
+/**
+ * A PNG of the board as the user sees it (hidden notes of others stay
+ * blank). With nothing to draw there is no png and the legend says why.
+ */
+export async function previewBoardAsMcpUser(
+  server: Server,
+  user: McpUser,
+  boardId: string,
+  opts: { region?: PreviewRegion; width?: number; fetch?: typeof fetch } = {},
+): Promise<{ png?: Buffer; legend: PreviewLegend }> {
+  const { nodes, contentBounds } = await readBoardAsMcpUser(
+    server,
+    user,
+    boardId,
+  );
+  const requested = opts.region ?? 'content';
+  let region: Rect | null;
+  let missingNodeIds: string[] = [];
+
+  if (requested === 'content') {
+    region = contentBounds && padRect(contentBounds, PREVIEW_PADDING);
+  } else if ('nodeIds' in requested) {
+    const wanted = new Set(requested.nodeIds);
+    const byId = nodesById(nodes);
+    // the whole board's byId, so attached arrows are bounded where they render
+    const bounds = unionRects(
+      nodes
+        .filter((node) => wanted.has(node.id))
+        .map((node) => nodeBounds(node, byId))
+        .filter((it): it is Rect => it !== null),
+    );
+
+    region = bounds && padRect(bounds, PREVIEW_PADDING);
+    missingNodeIds = [...wanted].filter((id) => !byId.has(id));
+  } else {
+    region = requested;
+  }
+
+  const legend = {
+    region,
+    nodeCount: 0,
+    skippedAssets: [],
+    ...(missingNodeIds.length ? { missingNodeIds } : {}),
+  };
+
+  if (!region) {
+    return {
+      legend: {
+        ...legend,
+        message:
+          requested === 'content'
+            ? 'The board is empty; there is nothing to preview'
+            : 'None of nodeIds is a positioned top-level node on the board',
+      },
+    };
+  }
+
+  if (!previewImageSize(region, opts.width ?? 1200)) {
+    return {
+      legend: {
+        ...legend,
+        message: `The region is too thin to draw within 1600x4800 pixels (${Math.round(region.width)}x${Math.round(region.height)} board units); preview a smaller rectangle or nodeIds`,
+      },
+    };
+  }
+
+  const nodeCount = previewNodes(nodes, region).length;
+
+  if (!nodeCount) {
+    return {
+      legend: { ...legend, message: 'Nothing on the board is in the region' },
+    };
+  }
+
+  const inFlight = previewsInFlight.get(user.id) ?? 0;
+
+  if (inFlight >= MAX_PREVIEWS_PER_USER) {
+    throw new Error(
+      'Another preview of this user is still rendering; wait for it first',
+    );
+  }
+
+  previewsInFlight.set(user.id, inFlight + 1);
+
+  let rendered: Awaited<ReturnType<typeof renderBoardPreview>>;
+
+  try {
+    rendered = await renderBoardPreview(nodes, region, opts.width ?? 1200, {
+      viewerId: user.id,
+      fetch: opts.fetch,
+    });
+  } finally {
+    const left = (previewsInFlight.get(user.id) ?? 1) - 1;
+
+    if (left > 0) {
+      previewsInFlight.set(user.id, left);
+    } else {
+      previewsInFlight.delete(user.id);
+    }
+  }
+
+  const { png, skipped, scale } = rendered;
+
+  return {
+    png,
+    legend: {
+      ...legend,
+      scale,
+      // from the PNG header
+      image: { width: png.readUInt32BE(16), height: png.readUInt32BE(20) },
+      nodeCount,
+      skippedAssets: skipped,
+    },
   };
 }
 
@@ -817,7 +1041,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
       inputSchema: z.object({
         boardId: boardIdSchema.describe('Tapiz board UUID'),
         layout: layoutSpecSchema.describe(
-          'The layout: kind, optional title and description, and cells with a title, optional subtitle, backgroundColor, seed notes and capacity',
+          'The layout: kind (columns, grid, quadrants or radial), optional title and description, cells with a title, optional subtitle, style (shape, backgroundColor, borderColor, borderWidth, frameless), seed notes and capacity, and optional decorations (https://cocomaterial.com art with an anchor and a size)',
         ),
         origin: insertOriginSchema,
         placement: insertPlacementSchema,
@@ -897,6 +1121,59 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
       return textResult(
         await lintBoardAsMcpUser(boardServer, user, boardId, nodeIds),
       );
+    }),
+  );
+
+  server.registerTool(
+    'preview_board',
+    {
+      title: 'Preview board',
+      description: PREVIEW_BOARD_DESCRIPTION,
+      inputSchema: z.object({
+        boardId: boardIdSchema.describe('Tapiz board UUID'),
+        region: previewRegionSchema,
+        width: z
+          .number()
+          .int()
+          .min(400)
+          .max(1600)
+          .default(1200)
+          .describe('Image width in pixels'),
+      }),
+      annotations: {
+        title: 'Preview board',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        // it fetches the Cocomaterial art on the board
+        openWorldHint: true,
+      },
+    },
+    hideQueryDetails(async ({ boardId, region, width }) => {
+      const { png, legend } = await previewBoardAsMcpUser(
+        boardServer,
+        user,
+        boardId,
+        { region, width },
+      );
+
+      if (!png) {
+        return textResult(legend);
+      }
+
+      return {
+        content: [
+          {
+            type: 'image' as const,
+            data: png.toString('base64'),
+            mimeType: 'image/png',
+          },
+          {
+            type: 'text' as const,
+            text: JSON.stringify(legend, null, 2),
+          },
+        ],
+      };
     }),
   );
 
@@ -1127,7 +1404,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Search Cocomaterial vectors',
       description:
-        'Search Cocomaterial assets by tag slugs. Use list_cocomaterial_tags first when tags are unknown.',
+        'Search Cocomaterial assets by tag slugs. Use list_cocomaterial_tags first when tags are unknown. Each result has aspectRatio (width / height of the art, null when unknown): give nodes and layout decorations a width and height in that ratio, since the art is letterboxed inside its box.',
       inputSchema: z.object({
         page: z.number().int().min(1).default(1).describe('Results page'),
         pageSize: z
