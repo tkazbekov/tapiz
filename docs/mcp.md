@@ -20,11 +20,13 @@ The MCP server lives in `apps/api/src/app/mcp.ts` and is registered from `apps/a
 
 It uses the official TypeScript MCP SDK with the Streamable HTTP transport. Each MCP request creates a stateless MCP transport, authenticates the caller with a Tapiz API token, and registers tools for that authenticated user.
 
-Board write tools do not mutate board state directly. They create a server-side virtual `Client`, join the requested board, and call `Client.processMsg()` with normal Tapiz `StateActions`. That keeps MCP edits on the same path as websocket users:
+Board write tools do not mutate board state directly. They create a server-side virtual `Client`, join the requested board, and call `Client.applyStateActions()` with normal Tapiz `StateActions`. That keeps MCP edits on the same path as websocket users:
 
 1. Board access is checked with the authenticated user.
 2. The board is loaded into the shared `Server` state if needed.
-3. Existing node validators accept or reject the action.
+3. Existing node validators accept or reject the action. MCP batches are
+   validated in order against a working copy of the board (see
+   [Write results](#write-results)); websocket batches keep their own path.
 4. Valid actions update the in-memory board state.
 5. Changes are broadcast to connected websocket clients.
 6. The board is persisted by the existing server persistence flow.
@@ -66,6 +68,19 @@ Reads current board nodes for a board the token can access. While the board
 hides notes (`notesHidden` in its settings), other users' notes come back as
 blank cards.
 
+The result also has `viewer: { userId, isAdmin, readOnly, notesHidden }`:
+
+- `isAdmin`: the token user is a board or team admin, so it may use layer `1`.
+- `readOnly`: the board's read-only setting; it blocks changes from users who
+  are not admins.
+- `notesHidden`: other users' notes are masked.
+
+`format` is `full` (default) or `compact`. Compact returns one entry per node,
+with children right after their parent:
+`{ id, type, layer?, x?, y?, width?, height?, parent?, text? }`. `text` is the
+rich text with tags removed, cut to 120 characters. Use it to place new content,
+and `full` before patching existing content.
+
 `add_node`
 
 Adds one node. The node must match the Tapiz schema for its type.
@@ -82,9 +97,72 @@ Removes one existing node.
 
 Applies multiple Tapiz `StateActions` in order. Use this for larger operations such as grouping notes, moving many nodes, or creating a full retrospective layout.
 
+Pass `includeBoard: false` to leave the board out of the result (default
+`true`).
+
 `get_user_settings`
 
 Reads the authenticated user settings, including default note styling.
+
+### Write Results
+
+All write tools (`add_node`, `patch_node`, `remove_node`,
+`apply_board_actions`, `add_cocomaterial_asset`) return:
+
+```ts
+{
+  status: 'applied' | 'partial' | 'rejected';
+  appliedActions: StateActions[];
+  rejected: {
+    index: number; // position in the submitted batch
+    op?: string;
+    id?: string;
+    type?: string;
+    code: string;
+    message: string;
+    hint?: string;
+    issues?: { path: (string | number)[]; message: string; code: string }[];
+    dependsOn?: number; // index of the rejected action this one relied on
+  }[];
+  board?: TuNode[]; // omitted when includeBoard is false
+}
+```
+
+Same-batch semantics:
+
+- Actions are validated in order, each against the board as the earlier
+  actions left it. A batch can add a note, patch it, remove it, or comment on
+  it.
+- A batch is all-or-nothing. If any action is rejected, nothing is applied,
+  and every action that passed is reported as `batch_aborted`.
+- An action on a node whose add was rejected is reported as
+  `depends_on_rejected`, with `dependsOn` set to that add's index.
+- `status` is `applied` when nothing was rejected, and `rejected` otherwise.
+  A read-only board rejects every action except `user` actions with code
+  `read_only`, so it also returns `rejected`. `partial` (some board changes
+  applied, others dropped) is reserved; MCP batches do not produce it.
+
+Rejection codes:
+
+| Code                  | Meaning                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `invalid_shape`       | The action is not a `StateAction` (`op`, `data.type`, …).                      |
+| `layer_admin_only`    | The user is not a board admin and the action adds or targets a layer-1 node.   |
+| `node_not_found`      | A patch or remove names an id that does not exist.                             |
+| `type_mismatch`       | The id exists, but with another type than `data.type`.                         |
+| `schema`              | The content fails the type's schema; `issues` lists the fields.                |
+| `notes_hidden_owner`  | Notes are hidden and a new note is not owned by the token user.                |
+| `masked_note`         | The change touches another user's hidden note beyond moving or resizing it.    |
+| `parent_invalid`      | `parent` names no existing node, or a comment's `parent` is not a note.        |
+| `forbidden`           | Another rule refused the change, e.g. editing someone else's comment.          |
+| `unsupported_type`    | No validator handles this type and op.                                         |
+| `duplicate_id`        | An add reuses an id that already exists, on the board or earlier in the batch. |
+| `depends_on_rejected` | The action targets a node whose add was rejected.                              |
+| `read_only`           | The board is read-only and the user is not an admin.                           |
+| `board_unavailable`   | The board could not be loaded.                                                 |
+| `batch_aborted`       | The action was valid but another action of the batch was rejected.             |
+
+Each rejection carries a `hint` on how to fix it.
 
 ### Cocomaterial Tools
 
@@ -186,7 +264,8 @@ validation.
 - Layer `1` is the board edit mode: only board admins, team admins included,
   can add, change, or remove layer `1` nodes. For any other user these actions
   are rejected along with the rest of their batch, so use layer `0` when the
-  API token's user is not a board admin.
+  API token's user is not a board admin. `get_board` reports this as
+  `viewer.isAdmin`.
 - While the board settings have `notesHidden: true`, other users' notes are
   returned as blank cards (empty text, drawing and emojis, no comments), admins
   included. New notes must be owned by the API token's user, and other users'

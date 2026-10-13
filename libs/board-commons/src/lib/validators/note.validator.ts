@@ -65,6 +65,10 @@ const NOTE_VALIDATOR: NodeValidator = {
     ) {
       return {
         success: false,
+        reason: {
+          code: 'notes_hidden_owner',
+          message: 'while notes are hidden, new notes must be owned by you',
+        },
       };
     }
 
@@ -105,6 +109,11 @@ const NOTE_VALIDATOR: NodeValidator = {
     ) {
       return {
         success: false,
+        reason: {
+          code: 'masked_note',
+          message:
+            "another user's note is hidden: it can only be moved or resized",
+        },
       };
     }
 
@@ -137,6 +146,10 @@ const NOTE_VALIDATOR: NodeValidator = {
     if (isNoteMaskedFor(state.node, state.nodes, state.userId)) {
       return {
         success: false,
+        reason: {
+          code: 'masked_note',
+          message: "another user's note is hidden: it cannot be removed",
+        },
       };
     }
 

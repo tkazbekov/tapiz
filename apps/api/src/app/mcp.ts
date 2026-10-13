@@ -9,6 +9,8 @@ import {
   type CocomaterialApiListVectors,
   type CocomaterialApiVector,
   type CocomaterialTag,
+  isNotesHidden,
+  isSettings,
   maskNodesForViewer,
   type StateActions,
   type TuNode,
@@ -19,6 +21,7 @@ import type { Server } from './server.js';
 import db from './db/index.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
 import { logError } from './log-error.js';
+import type { ActionRejection } from './validation.js';
 
 type McpUser = {
   id: string;
@@ -109,6 +112,7 @@ export const TAPIZ_MCP_INSTRUCTIONS = [
   'Note text renders black and notes can show an author/footer area, so use light high-contrast note colors and make notes tall enough that content is not hidden by footer UI.',
   'For compact labels in text or panel nodes, avoid raw h1/h2/h3 rich-text tags because Tapiz canvas heading styles render very large. Use paragraph/span markup with explicit font-size and line-height.',
   'After creating a layout, verify it in the web app with Playwright or a browser: check visible text, bounding boxes, layering, and console warnings.',
+  'Write tools validate a batch in order, so later actions can patch, remove or comment on nodes added earlier in the same batch. A batch is all-or-nothing: the result status is applied or rejected (a read-only board rejects every non-user action with code read_only), and rejected lists each failed action with index, code, message and a hint on how to fix it. get_board returns viewer (userId, isAdmin, readOnly, notesHidden) and a compact format for layout work.',
 ].join(' ');
 
 const BOARD_NODE_TYPE_GUIDANCE =
@@ -118,7 +122,7 @@ const BOARD_RICH_TEXT_GUIDANCE =
   'Rich text caution: raw h1/h2/h3 tags use large canvas template styles. For compact MCP-created text or panel labels, use p/span markup with explicit font-size and line-height, then verify in the browser.';
 
 const BOARD_BATCH_EDIT_GUIDANCE =
-  'For multi-node layouts, prefer apply_board_actions over repeated single-node calls. Use board coordinates and explicit width/height. Do not create arbitrary foreground layers such as layer 2; place participant notes/text on layer 0 and edit/template panels on layer 1. Unsupported layers are rejected by validation, and layer-1 changes from users who are not board admins reject the whole batch. For visual stacking, use board array order: later sibling nodes render above earlier sibling nodes, so place panels before notes and move nodes in the array when you need a different depth. For lanes, make panels wide and tall enough for the seed notes plus at least a few empty 300x300 post-it slots, and leave visible gaps between note cards.';
+  'For multi-node layouts, prefer apply_board_actions over repeated single-node calls. Use board coordinates and explicit width/height. Do not create arbitrary foreground layers such as layer 2; place participant notes/text on layer 0 and edit/template panels on layer 1. Unsupported layers are rejected by validation, and layer-1 changes from users who are not board admins reject the whole batch. For visual stacking, use board array order: later sibling nodes render above earlier sibling nodes, so place panels before notes and move nodes in the array when you need a different depth. For lanes, make panels wide and tall enough for the seed notes plus at least a few empty 300x300 post-it slots, and leave visible gaps between note cards. Actions are validated in order: later actions may patch, remove, or comment on nodes added earlier in the same batch. The batch is all-or-nothing; `rejected` lists index, code, message and hint, and the other actions are reported as batch_aborted.';
 
 class McpSocket {
   constructor(private server: Server) {}
@@ -283,18 +287,51 @@ export async function runAsMcpBoardClient<T>(
   }
 }
 
+export type McpWriteStatus = 'applied' | 'partial' | 'rejected';
+
+export interface McpWriteResult {
+  status: McpWriteStatus;
+  appliedActions: StateActions[];
+  rejected: ActionRejection[];
+  board?: TuNode[];
+}
+
+// partial: some board changes went through and others were dropped. Batches
+// are all-or-nothing and a read-only board drops every non-user action, so
+// MCP batches never produce it today
+export function writeStatus(
+  applied: StateActions[],
+  rejected: ActionRejection[],
+): McpWriteStatus {
+  if (!rejected.length) {
+    return 'applied';
+  }
+
+  return applied.some((it) => it.data.type !== 'user') ? 'partial' : 'rejected';
+}
+
 export async function applyBoardActionsAsMcpUser(
   server: Server,
   user: McpUser,
   boardId: string,
   actions: StateActions[],
-) {
+  opts: { includeBoard?: boolean } = {},
+): Promise<McpWriteResult> {
   return runAsMcpBoardClient(server, user, boardId, async (client) => {
-    const appliedActions = await client.processMsg(actions);
+    const { applied, rejected } = await client.applyStateActions(actions, {
+      sequential: true,
+      rejectDuplicateIds: true,
+    });
 
     return {
-      appliedActions,
-      board: maskNodesForViewer(server.getBoard(boardId) ?? [], user.id),
+      status: writeStatus(applied, rejected),
+      appliedActions: applied,
+      rejected,
+      ...(opts.includeBoard === false
+        ? {}
+        : {
+            board: maskNodesForViewer(server.getBoard(boardId) ?? [], user.id),
+          }),
     };
   });
 }
@@ -313,14 +350,86 @@ export async function readBoardAsMcpUser(
 
   const nodes =
     server.getBoard(boardId) ?? (await db.board.getBoard(boardId))?.board ?? [];
+  const settings = nodes.find(isSettings)?.content;
+  const isAdmin = (await db.board.getBoardAdmins(boardId)).includes(user.id);
 
   return {
     boardId,
+    viewer: {
+      userId: user.id,
+      isAdmin,
+      readOnly: !!settings?.readOnly,
+      notesHidden: isNotesHidden(settings),
+    },
     nodes: maskNodesForViewer(nodes, user.id),
   };
 }
 
-function createTapizMcpServer(boardServer: Server, user: McpUser) {
+const COMPACT_TEXT_LENGTH = 120;
+
+const plainText = (html: string) =>
+  html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, COMPACT_TEXT_LENGTH);
+
+export interface CompactNode {
+  id: string;
+  type: string;
+  layer?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  parent?: string;
+  text?: string;
+}
+
+// one line per node for layout work: geometry plus a text excerpt
+export function compactBoardNodes(nodes: TuNode[]): CompactNode[] {
+  const compact = (node: TuNode, parent?: string): CompactNode => {
+    const content = (node.content ?? {}) as {
+      layer?: unknown;
+      position?: { x?: unknown; y?: unknown };
+      width?: unknown;
+      height?: unknown;
+      text?: unknown;
+    };
+    const num = (value: unknown) =>
+      typeof value === 'number' ? value : undefined;
+    const text =
+      typeof content.text === 'string' ? plainText(content.text) : '';
+    const fields: CompactNode = {
+      id: node.id,
+      type: node.type,
+      layer: num(content.layer),
+      x: num(content.position?.x),
+      y: num(content.position?.y),
+      width: num(content.width),
+      height: num(content.height),
+      parent,
+      text: text || undefined,
+    };
+
+    return Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    ) as CompactNode;
+  };
+
+  return nodes.flatMap((node) => [
+    compact(node),
+    ...(node.children ?? []).map((child) => compact(child, node.id)),
+  ]);
+}
+
+export function createTapizMcpServer(boardServer: Server, user: McpUser) {
   const server = new McpServer(
     {
       name: 'tapiz',
@@ -335,9 +444,15 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Get board',
       description:
-        'Read the current Tapiz board nodes for a board the API token can access. Call this before editing so you preserve existing content, runtime nodes, positions, layers, and parent/child relationships.',
+        'Read the current Tapiz board nodes for a board the API token can access. Call this before editing so you preserve existing content, runtime nodes, positions, layers, and parent/child relationships. The result includes viewer { userId, isAdmin, readOnly, notesHidden }: when isAdmin is false, use layer 0 only; when readOnly is true, changes from users who are not admins are rejected. format "compact" returns one entry per node (children follow their parent) with id, type, layer, x, y, width, height, parent and a plain-text excerpt of up to 120 characters, which is enough for placing new content; use "full" before patching content.',
       inputSchema: z.object({
         boardId: boardIdSchema.describe('Tapiz board UUID'),
+        format: z
+          .enum(['full', 'compact'])
+          .default('full')
+          .describe(
+            'full: complete node content; compact: geometry and a text excerpt per node',
+          ),
       }),
       annotations: {
         title: 'Get board',
@@ -347,9 +462,15 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    hideQueryDetails(async ({ boardId }) =>
-      textResult(await readBoardAsMcpUser(boardServer, user, boardId)),
-    ),
+    hideQueryDetails(async ({ boardId, format }) => {
+      const board = await readBoardAsMcpUser(boardServer, user, boardId);
+
+      return textResult(
+        format === 'compact'
+          ? { ...board, nodes: compactBoardNodes(board.nodes) }
+          : board,
+      );
+    }),
   );
 
   server.registerTool(
@@ -357,7 +478,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Add node',
       description: [
-        'Add one Tapiz board node as the authenticated user. The node content must match the Tapiz schema for its type.',
+        'Add one Tapiz board node as the authenticated user. The node content must match the Tapiz schema for its type. Returns status, appliedActions and rejected, as apply_board_actions does.',
         BOARD_NODE_TYPE_GUIDANCE,
         BOARD_RICH_TEXT_GUIDANCE,
       ].join(' '),
@@ -408,7 +529,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Patch node',
       description: [
-        'Patch one existing Tapiz board node as the authenticated user. Only include changed content fields and preserve fields you are not intentionally changing.',
+        'Patch one existing Tapiz board node as the authenticated user. Only include changed content fields and preserve fields you are not intentionally changing. Returns status, appliedActions and rejected, as apply_board_actions does.',
         BOARD_RICH_TEXT_GUIDANCE,
       ].join(' '),
       inputSchema: z.object({
@@ -468,7 +589,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Remove node',
       description:
-        'Remove one existing Tapiz board node as the authenticated user. Preserve user, settings, timer, poll, estimation, and other workflow/runtime nodes unless the user explicitly asked to remove them.',
+        'Remove one existing Tapiz board node as the authenticated user. Preserve user, settings, timer, poll, estimation, and other workflow/runtime nodes unless the user explicitly asked to remove them. Returns status, appliedActions and rejected, as apply_board_actions does.',
       inputSchema: z.object({
         boardId: boardIdSchema.describe('Tapiz board UUID'),
         id: z.string().min(1).max(255).describe('Node ID to remove'),
@@ -514,7 +635,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Apply board actions',
       description: [
-        'Apply multiple Tapiz board add, patch, and remove actions as one authenticated realtime edit batch.',
+        'Apply multiple Tapiz board add, patch, and remove actions as one authenticated realtime edit batch. Returns status (applied or rejected; partial is reserved and not produced today), appliedActions, rejected (index, op, id, type, code, message, hint, issues, dependsOn) and, unless includeBoard is false, the board.',
         BOARD_BATCH_EDIT_GUIDANCE,
         BOARD_NODE_TYPE_GUIDANCE,
         BOARD_RICH_TEXT_GUIDANCE,
@@ -526,6 +647,12 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
           .min(1)
           .max(100)
           .describe('Tapiz StateActions to process in order'),
+        includeBoard: z
+          .boolean()
+          .default(true)
+          .describe(
+            'Return the whole board after the batch; pass false to keep the result small',
+          ),
       }),
       annotations: {
         title: 'Apply board actions',
@@ -535,12 +662,13 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    hideQueryDetails(async ({ boardId, actions }) => {
+    hideQueryDetails(async ({ boardId, actions, includeBoard }) => {
       const result = await applyBoardActionsAsMcpUser(
         boardServer,
         user,
         boardId,
         actions as StateActions[],
+        { includeBoard },
       );
 
       return textResult(result);
@@ -655,7 +783,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Add Cocomaterial asset',
       description:
-        'Add a selected Cocomaterial asset to a Tapiz board as a vector or image node. Use visual assets sparingly for decoration or context; keep editable meeting content in notes, panels, groups, or text nodes.',
+        'Add a selected Cocomaterial asset to a Tapiz board as a vector or image node. Use visual assets sparingly for decoration or context; keep editable meeting content in notes, panels, groups, or text nodes. Returns status, appliedActions and rejected, as apply_board_actions does.',
       inputSchema: cocomaterialNodeSchema,
       annotations: {
         title: 'Add Cocomaterial asset',

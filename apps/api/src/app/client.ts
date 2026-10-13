@@ -10,7 +10,13 @@ import {
 import { Server } from './server.js';
 import { type Socket } from 'socket.io';
 import db from './db/index.js';
-import { validation } from './validation.js';
+import {
+  type ActionRejection,
+  type BatchValidationOptions,
+  toRejection,
+  validateBatch,
+  validation,
+} from './validation.js';
 import { z } from 'zod';
 import { haveAccess } from './db/board-db.js';
 import { haveAccessTeam } from './db/team-db.js';
@@ -182,6 +188,74 @@ export class Client {
     this.sendVoteCorrections(messages, applied);
 
     return applied;
+  }
+
+  // MCP's way in: like parseStateActionMessage, but reports why actions were
+  // not applied
+  async applyStateActions(
+    messages: StateActions[],
+    opts: BatchValidationOptions = {},
+  ): Promise<{ applied: StateActions[]; rejected: ActionRejection[] }> {
+    const state = this.boardId ? this.server.getBoard(this.boardId) : undefined;
+
+    if (!this.boardId || !state) {
+      return {
+        applied: [],
+        rejected: (Array.isArray(messages) ? messages : []).map((it, index) =>
+          toRejection(
+            index,
+            it,
+            {
+              code: 'board_unavailable',
+              message: 'the board is not loaded for this client',
+            },
+            this.id,
+          ),
+        ),
+      };
+    }
+
+    const { actions, indices, rejected } = await validateBatch(
+      messages,
+      state,
+      this.id,
+      this.isAdmin,
+      this.boardId,
+      this.privateId,
+      opts,
+    );
+
+    if (!actions.length) {
+      return { applied: [], rejected };
+    }
+
+    // the same check updateSendAllStateActions filters with
+    const readOnly =
+      !this.isAdmin && !!this.server.getBoardSettings(this.boardId).readOnly;
+    const applied = this.updateSendAllStateActions(actions);
+
+    this.sendVoteCorrections(messages, applied);
+
+    if (readOnly) {
+      actions.forEach((action, i) => {
+        if (action.data.type !== 'user') {
+          rejected.push(
+            toRejection(
+              indices[i],
+              action,
+              {
+                code: 'read_only',
+                message: 'the board is read-only for users who are not admins',
+              },
+              this.id,
+            ),
+          );
+        }
+      });
+      rejected.sort((a, b) => a.index - b.index);
+    }
+
+    return { applied, rejected };
   }
 
   // the server rewrites votes (other users' entries, budget), so the sender's

@@ -21,9 +21,23 @@ const onHiddenNote = (state: {
 
 const COMMENT_VALIDATOR: NodeValidator = {
   add: async (data, state) => {
-    if (state.parentNode?.type !== 'note' || onHiddenNote(state)) {
+    if (state.parentNode?.type !== 'note') {
       return {
         success: false,
+        reason: {
+          code: 'parent_invalid',
+          message: 'a comment needs a parent note',
+        },
+      };
+    }
+
+    if (onHiddenNote(state)) {
+      return {
+        success: false,
+        reason: {
+          code: 'masked_note',
+          message: "another user's note is hidden: it cannot be commented on",
+        },
       };
     }
 
@@ -57,8 +71,17 @@ const COMMENT_VALIDATOR: NodeValidator = {
   },
   // only the author edits a comment, and only its text
   patch: async (data, state) => {
+    if (onHiddenNote(state)) {
+      return {
+        success: false,
+        reason: {
+          code: 'masked_note',
+          message: "another user's note is hidden: its comments are locked",
+        },
+      };
+    }
+
     if (
-      onHiddenNote(state) ||
       !('userId' in state.node.content) ||
       state.node.content.userId !== state.userId
     ) {
@@ -93,10 +116,19 @@ const COMMENT_VALIDATOR: NodeValidator = {
     };
   },
   remove: async (data, state) => {
+    if (onHiddenNote(state)) {
+      return {
+        success: false,
+        reason: {
+          code: 'masked_note',
+          message: "another user's note is hidden: its comments are locked",
+        },
+      };
+    }
+
     if (
-      onHiddenNote(state) ||
-      ('userId' in state.node.content &&
-        state.node.content.userId !== state.userId)
+      'userId' in state.node.content &&
+      state.node.content.userId !== state.userId
     ) {
       return {
         success: false,

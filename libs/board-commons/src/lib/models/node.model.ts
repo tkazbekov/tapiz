@@ -34,6 +34,9 @@ export interface BachStateActions {
   history?: boolean;
 }
 
+export type NodeValidatorReasonCode =
+  'notes_hidden_owner' | 'masked_note' | 'parent_invalid';
+
 interface NodeValidatorError {
   success: false;
   error?: {
@@ -42,6 +45,11 @@ interface NodeValidatorError {
       message: string;
       code: string;
     }>;
+  };
+  // why a rule (not the schema) failed, reported to MCP callers; not logged
+  reason?: {
+    code: NodeValidatorReasonCode;
+    message: string;
   };
 }
 
