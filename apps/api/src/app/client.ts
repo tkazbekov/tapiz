@@ -30,8 +30,9 @@ export class Client {
   boardId?: string;
   teamId?: string;
   isAdmin!: boolean;
-  sendTimeout?: ReturnType<typeof setTimeout>;
-  pendingMsgs: unknown[] = [];
+  // batched per board: a client switching boards must not send one board's
+  // messages to the other board's room
+  pendingMsgs = new Map<string, unknown[]>();
   correlationId = '';
   private privateId = '';
   // bumped by every join and leave so an older, still running join gives up
@@ -457,17 +458,22 @@ export class Client {
   }
 
   sendAll(boardId: string, msg: unknown) {
-    this.pendingMsgs.push(msg);
+    const pending = this.pendingMsgs.get(boardId);
 
-    if (this.sendTimeout) {
+    if (pending) {
+      pending.push(msg);
+
       return;
     }
 
-    this.sendTimeout = setTimeout(() => {
+    this.pendingMsgs.set(boardId, [msg]);
+
+    setTimeout(() => {
+      const msgs = this.pendingMsgs.get(boardId) ?? [];
+
+      this.pendingMsgs.delete(boardId);
       // send to all users in boardId but client
-      this.socket.to(boardId).emit('board', this.pendingMsgs);
-      this.pendingMsgs = [];
-      this.sendTimeout = undefined;
+      this.socket.to(boardId).emit('board', msgs);
     }, 50);
   }
 

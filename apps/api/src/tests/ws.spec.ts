@@ -277,6 +277,49 @@ describe('ws', () => {
     tab.close();
   });
 
+  it('switching boards sends each board only its own updates', async () => {
+    const owner = await getUserCaller(60);
+    const boardA = await owner.board.create({ name: 'switch A' });
+    const boardB = await owner.board.create({ name: 'switch B' });
+    await owner.board.changePrivacy({ boardId: boardA.id, isPublic: true });
+    await owner.board.changePrivacy({ boardId: boardB.id, isPublic: true });
+
+    const moverId = getAuth(61).sub;
+    const mover = await connect('tapiz_session=61');
+    const watcherA = await connect('tapiz_session=62');
+    const watcherB = await connect('tapiz_session=63');
+
+    await sendFrom(watcherA, { action: 'join', boardId: boardA.id });
+    await sendFrom(watcherB, { action: 'join', boardId: boardB.id });
+    await sendFrom(mover, { action: 'join', boardId: boardA.id });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const framesOf = (ws: typeof socket) => {
+      const frames: string[] = [];
+      ws.on('board', (msg: unknown) => frames.push(JSON.stringify(msg)));
+
+      return frames;
+    };
+    const seenByA = framesOf(watcherA);
+    const seenByB = framesOf(watcherB);
+
+    // in-app navigation: leave, then join the next board right away
+    mover.emit('leaveBoard');
+    mover.emit('board', { action: 'join', boardId: boardB.id });
+
+    const joinedB = (frame: string) =>
+      frame.includes(moverId) && frame.includes('"connected":true');
+
+    await vi.waitFor(() => {
+      expect(seenByB.some(joinedB)).toEqual(true);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(seenByA.some(joinedB)).toEqual(false);
+
+    [mover, watcherA, watcherB].forEach((tab) => tab.close());
+  });
+
   it('joining again after a reconnect restores board events', async () => {
     const caller = await getUserCaller(7);
     const board = await caller.board.create({ name: 'reconnect' });
