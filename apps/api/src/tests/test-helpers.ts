@@ -18,8 +18,8 @@ import { registerCsrfHook } from '../app/auth/csrf.js';
 import { authRoutes } from '../app/routers/auth-routes.js';
 import { fileUpload } from '../app/file-upload.js';
 import { db as drizzleDb } from '../app/db/init-db.js';
-import { accounts } from '../app/schema.js';
-import { eq } from 'drizzle-orm';
+import { accounts, boardTemplates, teamMembers } from '../app/schema.js';
+import { eq, inArray, or } from 'drizzle-orm';
 
 export async function errorCall(call: () => Promise<unknown>) {
   try {
@@ -237,4 +237,26 @@ export const deleteTestBoards = async () => {
       await db.board.deleteBoard(board.id);
     }
   }
+};
+
+// Templates owned or saved by a test user, or in one of their teams (a team
+// template outlives its deleted creator).
+export const deleteTestTemplates = async () => {
+  const ids = usersTest.map((user) => user.id);
+
+  await drizzleDb
+    .delete(boardTemplates)
+    .where(
+      or(
+        inArray(boardTemplates.accountId, ids),
+        inArray(boardTemplates.createdBy, ids),
+        inArray(
+          boardTemplates.teamId,
+          drizzleDb
+            .select({ teamId: teamMembers.teamId })
+            .from(teamMembers)
+            .where(inArray(teamMembers.accountId, ids)),
+        ),
+      ),
+    );
 };

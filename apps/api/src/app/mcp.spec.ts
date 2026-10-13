@@ -15,13 +15,16 @@ import {
   createCocomaterialNodeAction,
   createTapizMcpServer,
   hideQueryDetails,
+  lintBoardAsMcpUser,
   readBoardAsMcpUser,
   TAPIZ_MCP_INSTRUCTIONS,
 } from './mcp.js';
 import { Server } from './server.js';
+import { TemplateError } from './template-service.js';
 import {
   createMultipleUsers,
   deleteTestBoards,
+  deleteTestTemplates,
   getAuth,
   getUserCaller,
 } from '../tests/test-helpers.js';
@@ -33,6 +36,7 @@ describe('mcp', () => {
   });
 
   afterAll(async () => {
+    await deleteTestTemplates();
     await deleteTestBoards();
   });
 
@@ -266,6 +270,31 @@ describe('mcp', () => {
 
       return caller.board.create({ name, teamId: team.id });
     };
+    const callToolAs = async (
+      server: Server,
+      user: ReturnType<typeof mcpUser>,
+      name: string,
+      args: Record<string, unknown>,
+    ) => {
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      const client = new McpClient({ name: 'test', version: '0.0.0' });
+
+      await createTapizMcpServer(server, user).connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const result = await client.callTool({ name, arguments: args });
+
+      await client.close();
+
+      const text = (result.content as { type: 'text'; text: string }[])[0].text;
+
+      if (result.isError) {
+        throw new Error(text);
+      }
+
+      return JSON.parse(text);
+    };
     const persisted = async (boardId: string) => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -490,7 +519,8 @@ describe('mcp', () => {
         {
           ...noteAction(noteId, getAuth(2).sub).data,
           content: {
-            ...(noteAction(noteId, getAuth(2).sub).data.content as object),
+            ...((noteAction(noteId, getAuth(2).sub).data as TuNode)
+              .content as object),
             text: '<p>secret of the member</p>',
           },
           children: [
@@ -513,22 +543,8 @@ describe('mcp', () => {
         } as TuNode,
       ]);
 
-      const callTool = async (name: string, args: Record<string, unknown>) => {
-        const [clientTransport, serverTransport] =
-          InMemoryTransport.createLinkedPair();
-        const client = new McpClient({ name: 'test', version: '0.0.0' });
-
-        await createTapizMcpServer(server, admin).connect(serverTransport);
-        await client.connect(clientTransport);
-
-        const result = await client.callTool({ name, arguments: args });
-
-        await client.close();
-
-        return JSON.parse(
-          (result.content as { type: 'text'; text: string }[])[0].text,
-        );
-      };
+      const callTool = (name: string, args: Record<string, unknown>) =>
+        callToolAs(server, admin, name, args);
 
       const compact = await callTool('get_board', {
         boardId: board.id,
@@ -551,6 +567,416 @@ describe('mcp', () => {
 
       expect(written.status).toBe('applied');
       expect(Array.isArray(written.board)).toBe(true);
+    });
+
+    it('creates a layout and lints it through the tools', async () => {
+      const board = await teamBoard('mcp create layout');
+      const server = newServer();
+      const admin = mcpUser(1);
+      const member = mcpUser(2);
+      const layout = {
+        kind: 'columns',
+        title: 'Retro',
+        cells: [
+          { title: 'Went well', notes: ['Pairing'] },
+          { title: 'To improve', notes: [] },
+        ],
+      };
+
+      const dryRun = await callToolAs(server, admin, 'create_layout', {
+        boardId: board.id,
+        layout,
+        dryRun: true,
+      });
+
+      expect(dryRun.status).toBe('dry_run');
+      expect(dryRun.nodes.length).toBe(dryRun.nodeCount);
+      expect(await persisted(board.id)).toEqual([]);
+
+      const created = await callToolAs(server, admin, 'create_layout', {
+        boardId: board.id,
+        layout,
+        origin: { x: 1000, y: 500 },
+      });
+
+      expect(created.status).toBe('applied');
+      expect(created.layerCoerced).toBe(false);
+      expect(created.cells).toHaveLength(2);
+
+      const nodes = await persisted(board.id);
+      const [first] = created.cells;
+      const firstPanel = nodes.find((it) => it.id === first.panelId);
+
+      expect(firstPanel?.content).toMatchObject({
+        layer: 1,
+        position: { x: first.bounds.x, y: first.bounds.y },
+        width: first.bounds.width,
+        height: first.bounds.height,
+      });
+      expect(first.noteIds).toHaveLength(1);
+      expect(
+        nodes.find((it) => it.id === first.noteIds[0])?.content,
+      ).toMatchObject({
+        layer: 0,
+        ownerId: admin.id,
+        // the user's default note colour
+        color: '#fbb980',
+      });
+      expect(first.freeSlots[0].y).toBeGreaterThan(first.bounds.y);
+      expect(first.freeSlots[0].x).toBeGreaterThanOrEqual(first.bounds.x);
+
+      const read = await callToolAs(server, admin, 'get_board', {
+        boardId: board.id,
+        format: 'compact',
+      });
+
+      expect(read.contentBounds).toEqual(created.bounds);
+
+      const lint = await callToolAs(server, admin, 'lint_board', {
+        boardId: board.id,
+        nodeIds: [...Object.values(created.refs), 'missing-node'],
+      });
+
+      expect(lint.counts).toEqual({ error: 0, warning: 0 });
+      expect(lint.missingNodeIds).toEqual(['missing-node']);
+      expect(lint.contentBounds).toEqual(created.bounds);
+
+      // an empty scope would check nothing and read as a clean board
+      await expect(
+        callToolAs(server, admin, 'lint_board', {
+          boardId: board.id,
+          nodeIds: [],
+        }),
+      ).rejects.toThrow();
+
+      const coerced = await callToolAs(server, member, 'create_layout', {
+        boardId: board.id,
+        layout: {
+          ...layout,
+          kind: 'quadrants',
+          cells: [
+            { title: 'A' },
+            { title: 'B' },
+            { title: 'C' },
+            { title: 'D' },
+          ],
+        },
+        placement: 'below',
+      });
+
+      expect(coerced.status).toBe('applied');
+      expect(coerced.layerCoerced).toBe(true);
+      expect(coerced.origin).toEqual({
+        x: created.bounds.x,
+        y: created.bounds.y + created.bounds.height + 400,
+      });
+    });
+
+    it('describes quadrant axes in the order they render', async () => {
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      const client = new McpClient({ name: 'test', version: '0.0.0' });
+
+      await createTapizMcpServer(newServer(), mcpUser(1)).connect(
+        serverTransport,
+      );
+      await client.connect(clientTransport);
+
+      const { tools } = await client.listTools();
+
+      await client.close();
+
+      const description =
+        tools.find((tool) => tool.name === 'create_layout')?.description ?? '';
+
+      // expandLayout puts axes.y[0] on the top row
+      expect(description).toContain('y: [top, bottom]');
+      expect(description).toContain('x: [left, right]');
+      expect(description).not.toContain('[low, high]');
+    });
+
+    it('lints overlapping notes on a hand-built board', async () => {
+      const board = await getUserCaller(1).board.create({
+        name: 'mcp lint board',
+      });
+      const user = mcpUser(1);
+      const a = randomUUID();
+      const b = randomUUID();
+
+      await db.board.updateBoard(board.id, [
+        noteAction(a, user.id).data as TuNode,
+        noteAction(b, user.id).data as TuNode,
+      ]);
+
+      const result = await lintBoardAsMcpUser(newServer(), user, board.id);
+
+      expect(result.counts.warning).toBeGreaterThan(0);
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ code: 'note_overlap', nodeIds: [a, b] }),
+      );
+    });
+
+    describe('templates', () => {
+      const arrowAction = (
+        id: string,
+        start: string,
+        end: string,
+      ): StateActions => ({
+        op: 'add',
+        data: {
+          id,
+          type: 'arrow',
+          content: {
+            position: { x: 0, y: 0 },
+            width: 100,
+            height: 10,
+            layer: 0,
+            start: { x: 0, y: 0 },
+            end: { x: 100, y: 10 },
+            strokeStyle: 'solid',
+            arrowType: 'sharp',
+            startAttachment: { nodeId: start, offset: { x: 300, y: 150 } },
+            endAttachment: { nodeId: end, offset: { x: 0, y: 150 } },
+          },
+        },
+      });
+      const contentOf = (nodes: TuNode[], id: string) =>
+        nodes.find((it) => it.id === id)?.content as
+          Record<string, unknown> | undefined;
+
+      it('saves a layout and inserts copies of it on other boards', async () => {
+        const server = newServer();
+        const admin = mcpUser(1);
+        const member = mcpUser(2);
+        const source = await teamBoard('mcp template source');
+        const layout = await callToolAs(server, admin, 'create_layout', {
+          boardId: source.id,
+          layout: {
+            kind: 'columns',
+            cells: [
+              { title: 'Start', notes: ['First'] },
+              { title: 'Stop', notes: ['Second'] },
+            ],
+          },
+          origin: { x: 0, y: 0 },
+        });
+        const [noteA, noteB] = layout.cells.flatMap(
+          (cell: { noteIds: string[] }) => cell.noteIds,
+        );
+        const arrowId = randomUUID();
+
+        expect(
+          (
+            await callToolAs(server, admin, 'apply_board_actions', {
+              boardId: source.id,
+              actions: [arrowAction(arrowId, noteA, noteB)],
+              includeBoard: false,
+            })
+          ).status,
+        ).toBe('applied');
+
+        const saved = await callToolAs(
+          server,
+          admin,
+          'save_board_as_template',
+          {
+            boardId: source.id,
+            name: '  Start stop  ',
+            nodeIds: [...Object.values(layout.refs), arrowId],
+            scope: 'team',
+          },
+        );
+
+        expect(saved.template).toMatchObject({
+          name: 'Start stop',
+          nodeCount: layout.nodeCount + 1,
+          scope: { kind: 'team' },
+          canEdit: true,
+        });
+        expect(saved.dropped).toEqual([]);
+        expect(saved.detachedArrows).toEqual([]);
+
+        const templateId = saved.template.id;
+        const listed = await callToolAs(server, admin, 'list_templates', {});
+
+        expect(listed.templates).toContainEqual(
+          expect.objectContaining({ id: templateId, name: 'Start stop' }),
+        );
+
+        const summary = await callToolAs(server, admin, 'get_template', {
+          templateId,
+        });
+
+        expect(summary.template).toMatchObject({ id: templateId });
+        expect(summary.template).not.toHaveProperty('data');
+
+        const withData = await callToolAs(server, admin, 'get_template', {
+          templateId,
+          includeData: true,
+        });
+
+        expect(withData.template.data.nodes).toHaveLength(
+          saved.template.nodeCount,
+        );
+
+        // twice on another board of the admin: two independent copies
+        const target = await getUserCaller(1).board.create({
+          name: 'mcp template target',
+        });
+        const inserts = [];
+
+        for (let i = 0; i < 2; i++) {
+          inserts.push(
+            await callToolAs(server, admin, 'insert_template', {
+              boardId: target.id,
+              templateId,
+            }),
+          );
+        }
+
+        const [first, second] = inserts;
+        const sourceIds = new Set([...Object.values(layout.refs), arrowId]);
+        const firstIds = Object.values(first.refs) as string[];
+        const secondIds = Object.values(second.refs) as string[];
+
+        expect(first.status).toBe('applied');
+        expect(second.status).toBe('applied');
+        expect(first.layerCoerced).toBe(false);
+        expect(firstIds).toHaveLength(saved.template.nodeCount);
+        expect(new Set([...firstIds, ...secondIds]).size).toBe(
+          2 * saved.template.nodeCount,
+        );
+        expect(
+          [...firstIds, ...secondIds].some((id) => sourceIds.has(id)),
+        ).toBe(false);
+        expect(second.bounds.x).toBeGreaterThan(
+          first.bounds.x + first.bounds.width,
+        );
+
+        const nodes = await persisted(target.id);
+
+        for (const insert of inserts) {
+          const arrow = contentOf(nodes, insert.refs[arrowId]);
+
+          expect(arrow?.['startAttachment']).toMatchObject({
+            nodeId: insert.refs[noteA],
+          });
+          expect(arrow?.['endAttachment']).toMatchObject({
+            nodeId: insert.refs[noteB],
+          });
+          expect(
+            contentOf(nodes, insert.refs[layout.cells[0].panelId]),
+          ).toMatchObject({ layer: 1 });
+          expect(contentOf(nodes, insert.refs[noteA])).toMatchObject({
+            layer: 0,
+            ownerId: admin.id,
+          });
+        }
+
+        // a team member who is not a board admin gets everything on layer 0
+        const coerced = await callToolAs(server, member, 'insert_template', {
+          boardId: source.id,
+          templateId,
+          placement: 'below',
+        });
+
+        expect(coerced.status).toBe('applied');
+        expect(coerced.layerCoerced).toBe(true);
+
+        const sourceNodes = await persisted(source.id);
+
+        expect(
+          Object.values(coerced.refs).map(
+            (id) => contentOf(sourceNodes, id as string)?.['layer'],
+          ),
+        ).toEqual(Array(saved.template.nodeCount).fill(0));
+
+        // a member can read but not delete a team template of an admin
+        await expect(
+          callToolAs(server, member, 'delete_template', { templateId }),
+        ).rejects.toThrow('Only the team admins and the creator');
+
+        expect(
+          await callToolAs(server, admin, 'delete_template', { templateId }),
+        ).toEqual({ success: true });
+        await expect(
+          callToolAs(server, admin, 'get_template', { templateId }),
+        ).rejects.toThrow('Template not found');
+      });
+
+      it('hides personal templates and inaccessible boards', async () => {
+        const server = newServer();
+        const owner = mcpUser(1);
+        const source = await getUserCaller(1).board.create({
+          name: 'mcp personal template',
+        });
+
+        await db.board.updateBoard(source.id, [
+          noteAction(randomUUID(), owner.id).data as TuNode,
+        ]);
+
+        const saved = await callToolAs(
+          server,
+          owner,
+          'save_board_as_template',
+          { boardId: source.id, name: 'Mine' },
+        );
+        const templateId = saved.template.id;
+
+        expect(saved.template.scope).toEqual({ kind: 'personal' });
+
+        // another user cannot tell the template exists
+        const outsider = mcpUser(3);
+
+        for (const [name, args] of [
+          ['get_template', { templateId }],
+          ['insert_template', { boardId: source.id, templateId }],
+          ['delete_template', { templateId }],
+        ] as const) {
+          await expect(
+            callToolAs(server, outsider, name, args),
+          ).rejects.toThrow('Template not found');
+        }
+
+        expect(
+          (await callToolAs(server, outsider, 'list_templates', {})).templates,
+        ).not.toContainEqual(expect.objectContaining({ id: templateId }));
+
+        // the owner cannot insert into a board they have no access to
+        const foreign = await getUserCaller(3).board.create({
+          name: 'mcp foreign board',
+        });
+        const foreignNodes = [
+          noteAction(randomUUID(), outsider.id).data as TuNode,
+        ];
+
+        await db.board.updateBoard(foreign.id, foreignNodes);
+
+        await expect(
+          callToolAs(server, owner, 'insert_template', {
+            boardId: foreign.id,
+            templateId,
+          }),
+        ).rejects.toThrow('Unable to join board');
+        await expect(
+          callToolAs(server, owner, 'insert_template', {
+            boardId: foreign.id,
+            templateId,
+            dryRun: true,
+          }),
+        ).rejects.toThrow('Unable to read board');
+        await expect(
+          callToolAs(server, owner, 'save_board_as_template', {
+            boardId: foreign.id,
+            name: 'Theirs',
+          }),
+        ).rejects.toThrow('Board not found');
+
+        expect(await persisted(foreign.id)).toEqual(foreignNodes);
+        expect(
+          await db.board.getBoardUser(foreign.id, owner.id),
+        ).toBeUndefined();
+      });
     });
 
     it('reports board_unavailable without a joined board', async () => {
@@ -638,5 +1064,32 @@ describe('mcp', () => {
     ).rejects.toBe(other);
 
     consoleError.mockRestore();
+  });
+
+  it('adds the issues of a template error to its message', async () => {
+    const error = await hideQueryDetails(async () => {
+      throw new TemplateError(
+        'BAD_REQUEST',
+        'invalid_template',
+        'The selected nodes do not make a valid template',
+        [{ path: ['nodes', 0, 'content', 'width'], message: 'Too big' }],
+      );
+    })().catch((e: Error) => e);
+
+    expect((error as Error).message).toBe(
+      'The selected nodes do not make a valid template: nodes.0.content.width: Too big',
+    );
+
+    const notFound = new TemplateError(
+      'NOT_FOUND',
+      'template_not_found',
+      'Template not found',
+    );
+
+    await expect(
+      hideQueryDetails(async () => {
+        throw notFound;
+      })(),
+    ).rejects.toBe(notFound);
   });
 });

@@ -486,7 +486,7 @@ const HINTS: Partial<Record<RejectionCode, string>> = {
   invalid_shape:
     'each action needs op (add|patch|remove) and data { id, type, content? }',
   layer_admin_only:
-    'the API token user is not a board admin: use content.layer 0 for every node it adds, changes or removes',
+    'the API token user is not a board admin: use content.layer 0 for every node it adds, changes or removes, or call create_layout, which picks layers for the user',
   node_not_found:
     'call get_board for current ids; nodes added earlier in the same batch are visible to later actions',
   type_mismatch:

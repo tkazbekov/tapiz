@@ -75,6 +75,10 @@ The result also has `viewer: { userId, isAdmin, readOnly, notesHidden }`:
   are not admins.
 - `notesHidden`: other users' notes are masked.
 
+`contentBounds: { x, y, width, height } | null` is the box around every
+positioned node on the board (`null` when there is none). Place new content
+outside it.
+
 `format` is `full` (default) or `compact`. Compact returns one entry per node,
 with children right after their parent:
 `{ id, type, layer?, x?, y?, width?, height?, parent?, text? }`. `text` is the
@@ -99,6 +103,16 @@ Applies multiple Tapiz `StateActions` in order. Use this for larger operations s
 
 Pass `includeBoard: false` to leave the board out of the result (default
 `true`).
+
+`create_layout`
+
+Creates a columns, grid or quadrants layout of panels with note slots in one
+call. See [Layouts](#layouts).
+
+`lint_board`
+
+Read-only. Checks the board, or only the nodes in `nodeIds`, for layout
+problems. See [Lint](#lint).
 
 `get_user_settings`
 
@@ -178,6 +192,319 @@ Searches Cocomaterial assets by tag. Results include compact metadata and usable
 
 Adds a selected Cocomaterial asset to a board. SVG URLs become `vector` nodes. GIF and other URLs become `image` nodes. The tool uses centered placement and converts it to Tapiz's top-left node position. Assets go on layer `1` by default, which only board admins can write; pass `layer: 0` otherwise.
 
+### Template Tools
+
+See [Templates](#templates) for scopes, access and results.
+
+`list_templates`
+
+Read-only. Lists the personal and team templates the token user can read.
+
+`get_template`
+
+Read-only. Reads one template; `includeData: true` adds its nodes.
+
+`save_board_as_template`
+
+Saves nodes of a board (or the whole board) as a personal or team template.
+
+`insert_template`
+
+Inserts a copy of a template into a board, with fresh ids.
+
+`delete_template`
+
+Deletes a template. Boards it was inserted into keep their copies.
+
+## Layouts
+
+`create_layout` turns a short spec into panels, header text and notes, sized
+around Tapiz's real `300x300` note, and inserts them in one batch. Use it
+for retrospectives, kanban lanes, brainstorm grids and 2x2 matrices instead of
+hand-building panels with `apply_board_actions`.
+
+The code lives in `libs/board-commons/src/lib/layout/` (spec, expansion,
+presets, lint) and `apps/api/src/app/layout-service.ts` (insertion).
+
+### Input
+
+```ts
+{
+  boardId: string;
+  layout: {
+    kind: 'columns' | 'grid' | 'quadrants';
+    title?: string; // display preset text above the cells
+    description?: string; // caption preset text under the title
+    cells: {
+      title: string; // title preset in the panel header
+      subtitle?: string; // caption preset under the title
+      backgroundColor?: string; // #rrggbb panel background
+      notes?: string[]; // seed notes, in reading order
+      capacity?: number; // note slots to reserve (default 6)
+    }[];
+    gridColumns?: number; // grid: cells per row (default about square)
+    noteColumns?: number; // note columns per cell, 1-4 (default 2)
+    axes?: { x?: [string, string]; y?: [string, string] }; // quadrants only
+    noteColor?: string; // default: the user's note colour setting
+  };
+  origin?: { x: number; y: number }; // top-left of the layout
+  placement?: 'right' | 'below'; // without origin (default right)
+  layer?: 'auto' | 'asStored'; // default auto
+  dryRun?: boolean; // default false
+}
+```
+
+- `columns` takes at most 12 cells, side by side.
+- `grid` wraps the cells into rows of `gridColumns`.
+- `quadrants` takes exactly 4 cells: top-left, top-right, bottom-left,
+  bottom-right. Axis captions are in reading order: `axes.y` is
+  `[top, bottom]`, left of the rows (for example
+  `["High impact", "Low impact"]`), and `axes.x` is `[left, right]`, under
+  the grid.
+- A layout expands to at most 300 nodes; split bigger ones into several calls.
+
+Example, a 3-column retro:
+
+```json
+{
+  "boardId": "…",
+  "layout": {
+    "kind": "columns",
+    "title": "Sprint 42 retro",
+    "cells": [
+      { "title": "Went well", "notes": ["Pairing on the API", "Fast reviews"] },
+      { "title": "To improve", "notes": ["Flaky e2e tests"] },
+      { "title": "Actions", "subtitle": "Owner and date", "notes": [] }
+    ]
+  }
+}
+```
+
+### Sizing
+
+The geometry is deterministic:
+
+- Notes are `300x300`, `40px` apart, inside `40px` panel padding.
+- A cell is `80 + n·300 + (n−1)·40` wide for `n = noteColumns`.
+- The header band fits the estimated height of the title and subtitle (at
+  least `120px`), and notes start below it.
+- Rows: `max(ceil(capacity / n), ceil(notes / n) + 1)`, so there is always at
+  least one empty row. Every cell gets the largest cell's size.
+- Cells are `60px` apart, and the title block sits `60px` above them.
+- Panels never get `color`, which would recolour the notes inside; use
+  `backgroundColor` for a tinted lane.
+
+Without `origin`, the layout goes `400px` right of (or below) the
+`contentBounds` of the existing board, as the user sees it; an empty board
+puts it at `(0, 0)`.
+
+### Text presets
+
+Header text uses these presets, and hand-built text should too. Every size is
+in the editor's font-size list:
+
+| Preset       | Size           | Line height | Style          |
+| ------------ | -------------- | ----------- | -------------- |
+| `display`    | 96px           | 1.1         | bold           |
+| `title`      | 64px           | 1.15        | bold           |
+| `heading`    | 40px           | 1.2         | bold           |
+| `subheading` | 28px           | 1.25        | bold           |
+| `body`       | 24px (default) | 1.3         |                |
+| `label`      | 20px           | 1.3         | bold           |
+| `caption`    | 28px           | 1.3         | grey `#868e96` |
+
+The markup is the sanitizer's normal form, so it is stored unchanged:
+
+```html
+<p>
+  <span style="font-size: 40px; line-height: 1.2"><strong>Went well</strong></span>
+</p>
+```
+
+Bold goes through `<strong>` (`font-weight` is not an allowed style), and
+`body` text leaves out `font-size`. Never use `h1`–`h3`.
+
+### Layer policies
+
+- `auto` (default): board admins get panels and text on layer `1` and notes
+  on layer `0`. Anyone else gets every node on layer `0`,
+  and the result says `layerCoerced: true`.
+- `asStored`: panels and text stay on layer `1`. For a user who is not a
+  board admin, the call is rejected with `layer_admin_only` and nothing is
+  written.
+
+Panels are inserted after the last existing panel, so they render behind
+existing notes, in the layout's own order. A websocket edit landing at the
+same moment can shift a panel by one array slot.
+
+### Result
+
+```ts
+{
+  status: 'applied' | 'dry_run' | 'rejected';
+  origin: { x: number; y: number };
+  bounds: { x: number; y: number; width: number; height: number };
+  nodeCount: number;
+  layerCoerced: boolean;
+  refs: Record<string, string>; // ref -> node id (provisional in a dry run, empty when rejected)
+  lint: LintIssue[]; // advisory, see Lint
+  rejected: Rejection[]; // as in Write Results; index -1 for the whole call
+  nodes?: { ref; id; type; layer; x; y; width?; height? }[]; // dry run only
+  cells: {
+    ref: string; // cell-0, cell-1, …
+    title: string;
+    panelId?: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    noteIds: string[];
+    freeSlots: { x: number; y: number }[]; // top-left of each empty 300x300 slot
+  }[];
+}
+```
+
+All coordinates are board coordinates. To add notes to a cell later, add
+`300x300` notes on layer `0` at its `freeSlots` with `apply_board_actions`.
+
+- `dryRun: true` checks access without joining the board, so it writes
+  nothing, not even a board membership.
+- A read-only board rejects users who are not admins with `read_only`, in a
+  dry run too.
+- While notes are hidden, the inserted notes are owned by the token user, so
+  they are accepted.
+
+### Lint
+
+`create_layout` returns `lint` for the inserted nodes, and `lint_board`
+checks any board:
+
+```ts
+lint_board({ boardId, nodeIds? }) => {
+  issues: {
+    level: 'error' | 'warning';
+    code: string;
+    nodeIds: string[];
+    message: string;
+    hint?: string;
+  }[];
+  counts: { error: number; warning: number };
+  contentBounds: Rect | null;
+  missingNodeIds?: string[]; // nodeIds that are not on the board
+}
+```
+
+`nodeIds` takes 1-500 ids; omit it to lint the whole board. An empty list is
+rejected, because it would check nothing and read as a clean board.
+
+Lint runs on the board as the user sees it (hidden notes are blank) and never
+blocks a write. Text heights are estimates, so confirm in the browser.
+
+| Code                         | Level   | Meaning                                                                      |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------- |
+| `layer_admin_only`           | error   | A layer-1 node from a user who is not a board admin (not reported today).    |
+| `nonpositive_size`           | error   | A width or height of 0 or less.                                              |
+| `text_overflow`              | warning | Text or panel header text needs more height than the node has.               |
+| `raw_heading`                | warning | Rich text uses `h1`–`h3`, which render at 320/160/80px.                      |
+| `note_text_too_long`         | warning | The note shrinks its text below 18px to fit.                                 |
+| `note_overlap`               | warning | Two notes overlap.                                                           |
+| `note_in_header`             | warning | A note covers a panel's header text.                                         |
+| `panel_color_recolors_notes` | warning | A panel with `color` contains notes, whose own colour it overrides.          |
+| `overlaps_existing`          | warning | Inserted nodes overlap content that was already on the board (inserts only). |
+| `dangling_attachment`        | warning | An arrow is attached to a node that does not exist.                          |
+
+## Templates
+
+A template is a saved set of board nodes that can be inserted into any board
+the user can edit. The web app and MCP share the code in
+`apps/api/src/app/template-service.ts`; the data format and copy rules live in
+`libs/board-commons/src/lib/layout/`.
+
+### Scopes and access
+
+- `personal`: only the owner can read, insert or delete it.
+- `team`: every team member can read and insert it; team admins and the member
+  who saved it can delete it. A member who leaves the team loses access.
+- A template the user cannot read is reported as `Template not found`, so its
+  existence is not revealed. A `templateId` that is not a UUID fails input
+  validation instead.
+- Quotas: 200 personal templates per account, 500 per team. A template holds
+  at most 500 nodes and 512 KB.
+
+### Saving
+
+```ts
+save_board_as_template({
+  boardId: string;
+  name: string; // 1-256 characters, trimmed
+  description?: string; // up to 2000 characters
+  nodeIds?: string[]; // up to 500; default: the whole board
+  includeContained?: boolean; // default true
+  scope?: 'personal' | 'team'; // default personal
+  teamId?: string; // team scope; default: the board's team
+}) => {
+  template: TemplateSummary;
+  dropped: { id: string; type: string; reason: string }[];
+  detachedArrows: string[];
+  lint: LintIssue[];
+}
+```
+
+- Pass the `refs` values that `create_layout` returned, or node ids from
+  `get_board`. An id that is not on the board fails the call.
+- With `includeContained`, nodes lying inside a selected panel or group are
+  saved too.
+- Team scope needs team membership, even for a board admin; `teamId` with
+  `scope: 'personal'` is an error.
+- Only `panel`, `text`, `note`, `group`, `arrow`, `vector` and `image` nodes
+  are saved. Everything else is listed in `dropped`:
+  - `type_not_allowed`: user, settings, timer, poll, estimation and other
+    runtime nodes;
+  - `masked_note`: another user's note the token user cannot read: notes
+    are hidden on the board, or the note's text is private (its
+    `textHidden`, or else its owner's hidden-text setting);
+  - `board_scoped_asset`: images and vectors with `data:` or uploaded-file
+    URLs.
+- An arrow attached to a node outside the selection keeps where it renders
+  but loses that attachment, and is listed in `detachedArrows`.
+- Votes, emojis, note owners and comments are not saved, and rich text is
+  sanitized. Template refs are usually the source node ids.
+
+`TemplateSummary` is
+`{ id, name, description, scope, nodeCount, width, height, createdBy, createdAt, updatedAt, canEdit }`,
+with `scope` either `{ kind: 'personal' }` or
+`{ kind: 'team', teamId, teamName }`. `canEdit` means the user may delete it.
+`list_templates` returns `{ templates: TemplateSummary[] }`, newest first, and
+`get_template` returns `{ template }`, with `data: { version, size, nodes }`
+when `includeData` is true.
+
+### Inserting
+
+```ts
+insert_template({
+  boardId: string;
+  templateId: string;
+  origin?: { x: number; y: number };
+  placement?: 'right' | 'below';
+  layer?: 'auto' | 'asStored';
+  dryRun?: boolean;
+})
+```
+
+`origin`, `placement`, `layer` and `dryRun` work as in
+[`create_layout`](#layer-policies), and the result is the `create_layout`
+result without `cells`. `refs` maps each template ref to the new node id.
+Every insert gets fresh ids, so inserting twice gives two independent copies.
+Arrows attached inside the template point at the new nodes, and notes are owned
+by the token user with no votes or emojis.
+
+### Errors
+
+Template errors come back as tool errors with a readable message, for example
+`Template not found`, `Board not found`, `Only members of the team can save
+team templates` or `This account already has 200 templates, the limit is
+200`. A save whose nodes do not make a valid template lists the failing paths
+in the message. Inserting into a board the user cannot access fails with
+`Unable to join board with this API token` (`Unable to read board…` in a dry
+run) and changes nothing.
+
 ## Local Setup
 
 Install dependencies:
@@ -227,13 +554,24 @@ For hosted MCP clients, expose the API over HTTPS and configure the same endpoin
 
 Create a fun retrospective:
 
-1. Call `get_user_settings` for note defaults.
-2. Call `list_cocomaterial_tags`.
-3. Call `search_cocomaterial_vectors` for relevant assets.
-4. Call `apply_board_actions` to create notes, groups, labels, and layout.
-5. Call `add_cocomaterial_asset` for decorations.
+1. Call `get_board` to see `viewer` and `contentBounds`.
+2. Call `create_layout` with the columns and seed notes (try `dryRun: true`
+   first to check `lint`).
+3. Call `list_cocomaterial_tags` and `search_cocomaterial_vectors` for
+   relevant assets.
+4. Call `add_cocomaterial_asset` for decorations, outside the cells.
+5. Call `apply_board_actions` to add more notes at the cells' `freeSlots`.
 6. Open the board in a browser and verify the actual rendered result. Rich text
    can render much larger than its node box if you use raw heading tags.
+
+Reuse a layout on other boards:
+
+1. Call `create_layout` on a scratch board, and adjust it until it looks right.
+2. Call `save_board_as_template` with the layout's `refs` values as `nodeIds`
+   (or no `nodeIds` for the whole board), and `scope: 'team'` to share it.
+3. Later, call `list_templates` to find it.
+4. Call `insert_template` with the target `boardId`; try `dryRun: true` first
+   to see where it lands.
 
 Group all notes in a board:
 
@@ -250,6 +588,11 @@ validation.
 - Always call `get_board` before editing an existing board. Preserve existing
   user, settings, timer, poll, estimation, and content nodes unless the user
   asked to replace them.
+- For lanes, grids and quadrants, use `create_layout`; it handles sizing,
+  header bands, layers and placement. Check hand-built layouts with
+  `lint_board`.
+- To reuse a layout, save it with `save_board_as_template` and place copies
+  with `insert_template` instead of rebuilding it.
 - Use `apply_board_actions` for multi-node changes. A full layout should arrive
   as one batch so ordering, layers, parent/child relationships, and validation
   are handled together.
@@ -294,8 +637,8 @@ validation.
   only on `get_board`.
 - Rich text supports HTML, but raw `h1`, `h2`, and `h3` tags are styled for
   canvas templates and can become huge. For compact MCP-created labels, use
-  paragraph/span markup with explicit `font-size` and `line-height`, then verify
-  that the text fits in its node.
+  paragraph/span markup with explicit `font-size` and `line-height` (see
+  [Text presets](#text-presets)), then verify that the text fits in its node.
 
 ## Node Type Tradeoffs
 
@@ -327,6 +670,6 @@ Run focused API checks after changing MCP code:
 
 ```shell
 pnpm exec nx typecheck api
-pnpm exec nx test api -- --run src/app/mcp.spec.ts
+pnpm exec nx test api -- --run src/app/mcp.spec.ts src/app/layout-service.spec.ts
 pnpm exec nx lint api
 ```
