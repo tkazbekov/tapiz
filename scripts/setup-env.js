@@ -1,9 +1,13 @@
-import { config } from 'dotenv'
-import { expand } from 'dotenv-expand';
-
-expand(config())
-
 import { writeFileSync } from 'fs';
+
+// .env is optional: the Docker build passes API_URL/WS_URL as build args
+try {
+  process.loadEnvFile();
+} catch (e) {
+  if (e.code !== 'ENOENT') {
+    throw e;
+  }
+}
 
 const front = ['API_URL', 'WS_URL', 'DEMO'];
 const frontConfig = {};

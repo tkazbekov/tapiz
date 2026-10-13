@@ -64,7 +64,7 @@ When `API_URL` uses `https`, the cookie is marked `Secure` automatically. `SESSI
 
 Rate limits key on the client IP. By default the API uses the address of the TCP connection and ignores `X-Forwarded-For`, which is right when browsers talk to the API directly (as with the default `API_URL=http://localhost:8000/api`).
 
-To serve the API through the bundled nginx, which forwards `/api/` and `/socket.io/` to it, point the browser at the web container: set `API_URL` to `${FRONTEND_URL}/api` and `WS_URL` to the same host with `ws`/`wss`, for example:
+To serve the API through the bundled nginx, which forwards `/api/` and `/socket.io/` to it, point the browser at the web container: set `API_URL` to your `FRONTEND_URL` followed by `/api` and `WS_URL` to the same host with `ws`/`wss`, for example:
 
 ```dotenv
 FRONTEND_URL=https://tapiz.example.com
