@@ -31,7 +31,7 @@ describe('validateAction', () => {
     };
 
     await expect(
-      validateAction(action, [], 'user-1', false, 'board-1', 'private-1'),
+      validateAction(action, [], 'user-1', true, 'board-1', 'private-1'),
     ).resolves.toEqual(action);
   });
 
@@ -61,7 +61,7 @@ describe('validateAction', () => {
     };
 
     await expect(
-      validateAction(action, [], 'user-1', false, 'board-1', 'private-1'),
+      validateAction(action, [], 'user-1', true, 'board-1', 'private-1'),
     ).resolves.toBe(false);
 
     consoleError.mockRestore();
@@ -380,5 +380,133 @@ describe('validation node type', () => {
         'private-1',
       ),
     ).resolves.toMatchObject(actions);
+  });
+});
+
+describe('validateAction background layer', () => {
+  const textContent = {
+    text: '<p>label</p>',
+    position: { x: 0, y: 0 },
+    width: 200,
+    height: 100,
+    rotation: 0,
+  };
+  const pollId = 'b3a1c3c4-6f1e-4d55-9b5e-0f7f3f1f2a10';
+  const optionId = '5b3a6a2b-6d5e-4b9b-8d1c-6a2f9d4f1c11';
+  const nodes: TuNode[] = [
+    { id: 'text-0', type: 'text', content: { ...textContent, layer: 0 } },
+    {
+      id: 'panel-1',
+      type: 'panel',
+      content: { position: { x: 0, y: 0 }, width: 400, height: 400, layer: 1 },
+    },
+    {
+      id: pollId,
+      type: 'poll',
+      content: {
+        layer: 1,
+        position: { x: 0, y: 0 },
+        title: 'Lunch?',
+        finished: false,
+        mode: 'public',
+        options: [{ id: optionId, text: 'Yes' }],
+      },
+    },
+  ];
+
+  const run = (action: StateActions, isAdmin = false) =>
+    validateAction(action, nodes, 'user-1', isAdmin, 'board-1', 'private-1');
+
+  it('lets only admins add nodes to the background layer', async () => {
+    const action: StateActions = {
+      op: 'add',
+      data: {
+        id: 'text-1',
+        type: 'text',
+        content: { ...textContent, layer: 1 },
+      },
+    };
+
+    await expect(run(action)).resolves.toBe(false);
+    await expect(run(action, true)).resolves.toMatchObject({ op: 'add' });
+  });
+
+  it('rejects a non-admin moving a node to the background layer', async () => {
+    await expect(
+      run({
+        op: 'patch',
+        data: { id: 'text-0', type: 'text', content: { layer: 1 } },
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('rejects a non-admin editing or removing a background node', async () => {
+    const move: StateActions = {
+      op: 'patch',
+      data: {
+        id: 'panel-1',
+        type: 'panel',
+        content: { position: { x: 5, y: 5 } },
+      },
+    };
+
+    await expect(run(move)).resolves.toBe(false);
+    await expect(run(move, true)).resolves.toMatchObject({ op: 'patch' });
+    await expect(
+      run({ op: 'remove', data: { id: 'panel-1', type: 'panel' } }),
+    ).resolves.toBe(false);
+  });
+
+  it('lets members answer a poll on the background layer', async () => {
+    await expect(
+      run({
+        op: 'add',
+        parent: pollId,
+        data: {
+          id: 'answer-1',
+          type: 'poll.answer',
+          content: { optionId, userId: 'user-1' },
+        },
+      }),
+    ).resolves.toMatchObject({ op: 'add', parent: pollId });
+  });
+
+  it('rejects notes and groups on the background layer from non-admins', async () => {
+    const note: StateActions = {
+      op: 'add',
+      data: {
+        id: 'note-1',
+        type: 'note',
+        content: {
+          text: '',
+          position: { x: 0, y: 0 },
+          layer: 1,
+          ownerId: 'user-1',
+          votes: [],
+          emojis: [],
+          drawing: [],
+          width: 300,
+          height: 300,
+        },
+      },
+    };
+    const group: StateActions = {
+      op: 'add',
+      data: {
+        id: 'group-1',
+        type: 'group',
+        content: {
+          position: { x: 0, y: 0 },
+          width: 400,
+          height: 400,
+          layer: 1,
+        },
+      },
+    };
+
+    await expect(run(note)).resolves.toBe(false);
+    await expect(run(group)).resolves.toBe(false);
+    await expect(run(note, true)).resolves.toMatchObject({ op: 'add' });
+    await expect(run(group, true)).resolves.toMatchObject({ op: 'add' });
   });
 });

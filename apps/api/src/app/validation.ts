@@ -81,6 +81,20 @@ export const validateAction = async (
   const matchesType = (node: TuNode | undefined): node is TuNode =>
     !!node && node.type === msg.data.type;
 
+  // layer 1 is the board edit mode, which only board admins can change
+  const layerOf = (content: unknown) =>
+    (content as { layer?: unknown } | undefined)?.layer;
+  const target =
+    msg.op === 'add' ? undefined : findNode(msg.data.id, msg.parent);
+  const incoming = msg.op === 'remove' ? undefined : msg.data.content;
+
+  if (
+    !isAdmin &&
+    (layerOf(incoming) === 1 || (target && layerOf(target.content) === 1))
+  ) {
+    return false;
+  }
+
   let parentNode: TuNode | undefined;
 
   if (msg.parent) {

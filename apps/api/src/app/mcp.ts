@@ -89,7 +89,7 @@ const cocomaterialNodeSchema = z.object({
     .union([z.literal(0), z.literal(1)])
     .default(1)
     .describe(
-      'Board layer: 0 for participant content, 1 for edit/template content',
+      'Board layer: 0 for participant content, 1 for edit/template content. Only board admins can add to layer 1; use 0 otherwise.',
     ),
   rotation: z.number().default(0).describe('Node rotation in degrees'),
 });
@@ -98,7 +98,7 @@ const COCOMATERIAL_API_URL = 'https://cocomaterial.com/api';
 
 export const TAPIZ_MCP_INSTRUCTIONS = [
   'Tapiz is an infinite collaborative board. Read the board before editing existing content.',
-  'Use board coordinates in content.position, not browser screen coordinates. Do not use content.layer as z-index: Tapiz uses layer 0 for participant board content such as notes/text and layer 1 for edit/template content such as panels. Do not invent arbitrary layers such as layer 2; validation only accepts layers 0 and 1, and board-mode tools like area selection are designed around those supported layer roles.',
+  'Use board coordinates in content.position, not browser screen coordinates. Do not use content.layer as z-index: Tapiz uses layer 0 for participant board content such as notes/text and layer 1 for edit/template content such as panels. Do not invent arbitrary layers such as layer 2; validation only accepts layers 0 and 1, and board-mode tools like area selection are designed around those supported layer roles. Layer 1 is the board edit mode and only board admins (including team admins) can add, change or remove layer-1 nodes; for any other user these actions are rejected, along with the rest of their batch, so use layer 0 when the API token user is not a board admin.',
   'Visual depth/z-index comes from node order in the board array: later sibling nodes render above earlier sibling nodes. To put an element in front of or behind another element, move it in the array with apply_board_actions position/order rather than changing content.layer.',
   'Use apply_board_actions for multi-node edits so related changes are validated and persisted as one realtime batch.',
   'Choose node types deliberately: notes are editable/votable sticky content; panels are visual lanes/backgrounds; groups are movable/votable clusters; text is standalone labels/instructions; arrows connect nodes; vectors/images are visual assets; polls, estimation, timers, comments, settings, and users are specialized workflow/runtime nodes.',
@@ -116,7 +116,7 @@ const BOARD_RICH_TEXT_GUIDANCE =
   'Rich text caution: raw h1/h2/h3 tags use large canvas template styles. For compact MCP-created text or panel labels, use p/span markup with explicit font-size and line-height, then verify in the browser.';
 
 const BOARD_BATCH_EDIT_GUIDANCE =
-  'For multi-node layouts, prefer apply_board_actions over repeated single-node calls. Use board coordinates and explicit width/height. Do not create arbitrary foreground layers such as layer 2; place participant notes/text on layer 0 and edit/template panels on layer 1. Unsupported layers are rejected by validation. For visual stacking, use board array order: later sibling nodes render above earlier sibling nodes, so place panels before notes and move nodes in the array when you need a different depth. For lanes, make panels wide and tall enough for the seed notes plus at least a few empty 300x300 post-it slots, and leave visible gaps between note cards.';
+  'For multi-node layouts, prefer apply_board_actions over repeated single-node calls. Use board coordinates and explicit width/height. Do not create arbitrary foreground layers such as layer 2; place participant notes/text on layer 0 and edit/template panels on layer 1. Unsupported layers are rejected by validation, and layer-1 changes from users who are not board admins reject the whole batch. For visual stacking, use board array order: later sibling nodes render above earlier sibling nodes, so place panels before notes and move nodes in the array when you need a different depth. For lanes, make panels wide and tall enough for the seed notes plus at least a few empty 300x300 post-it slots, and leave visible gaps between note cards.';
 
 class McpSocket {
   constructor(private server: Server) {}

@@ -96,7 +96,7 @@ Searches Cocomaterial assets by tag. Results include compact metadata and usable
 
 `add_cocomaterial_asset`
 
-Adds a selected Cocomaterial asset to a board. SVG URLs become `vector` nodes. GIF and other URLs become `image` nodes. The tool uses centered placement and converts it to Tapiz's top-left node position.
+Adds a selected Cocomaterial asset to a board. SVG URLs become `vector` nodes. GIF and other URLs become `image` nodes. The tool uses centered placement and converts it to Tapiz's top-left node position. Assets go on layer `1` by default, which only board admins can write; pass `layer: 0` otherwise.
 
 ## Local Setup
 
@@ -181,6 +181,10 @@ validation.
   as panels. Do not invent arbitrary layers such as `2`: validation accepts only
   layers `0` and `1`, and board-mode interactions such as area selection are
   designed around those roles.
+- Layer `1` is the board edit mode: only board admins, team admins included,
+  can add, change, or remove layer `1` nodes. For any other user these actions
+  are rejected along with the rest of their batch, so use layer `0` when the
+  API token's user is not a board admin.
 - Visual depth/z-index comes from node order in the board array. Later sibling
   nodes render above earlier sibling nodes. To put an element in front of or
   behind another element, move it in the array with `apply_board_actions`

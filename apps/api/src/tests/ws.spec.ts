@@ -461,6 +461,62 @@ describe('ws', () => {
     member.close();
   });
 
+  it('lets only board admins edit the background layer', async () => {
+    const owner = await getUserCaller(24);
+    const team = await db.team.createTeam('layers', getAuth(24).sub);
+    await addTeamMember(getAuth(25).sub, team.id, 'admin');
+    await addTeamMember(getAuth(26).sub, team.id, 'member');
+    const board = await owner.board.create({
+      name: 'layers',
+      teamId: team.id,
+    });
+
+    const teamAdmin = await connect('tapiz_session=25');
+    const member = await connect('tapiz_session=26');
+    await sendFrom(teamAdmin, { action: 'join', boardId: board.id });
+    await sendFrom(member, { action: 'join', boardId: board.id });
+
+    // a team admin only holds a member role on the board itself
+    expect((await getBoardUser(board.id, getAuth(25).sub))?.role).toEqual(
+      'member',
+    );
+
+    const addPanel = (ws: typeof socket, id: string) =>
+      sendFrom(ws, [
+        {
+          op: 'add',
+          data: {
+            id,
+            type: 'panel',
+            content: {
+              position: { x: 0, y: 0 },
+              width: 400,
+              height: 400,
+              layer: 1,
+            },
+          },
+        },
+      ]);
+
+    const memberPanel = randomUUID();
+    const adminPanel = randomUUID();
+
+    await addPanel(member, memberPanel);
+    await addPanel(teamAdmin, adminPanel);
+
+    await vi.waitFor(() => {
+      expect(
+        wsServer.getBoard(board.id)?.some((it) => it.id === adminPanel),
+      ).toEqual(true);
+    });
+    expect(
+      wsServer.getBoard(board.id)?.some((it) => it.id === memberPanel),
+    ).toEqual(false);
+
+    teamAdmin.close();
+    member.close();
+  });
+
   it('removing an account revokes its single-member team boards', async () => {
     const owner = await getUserCaller(9);
     const team = await db.team.createTeam('solo team', getAuth(9).sub);
