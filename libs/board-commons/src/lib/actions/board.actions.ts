@@ -19,6 +19,12 @@ export const BoardActions = {
     BoardCommonActions.setState,
     props<{ data: TuNode[] }>(),
   ),
+  // the whole board again after notes are hidden or revealed; unlike
+  // setState it doesn't restore the initial view
+  resyncState: createAction(
+    BoardCommonActions.resyncState,
+    props<{ data: TuNode[] }>(),
+  ),
   stateAction: createAction(
     BoardCommonActions.stateAction,
     props<{ data: StateActions[] }>(),

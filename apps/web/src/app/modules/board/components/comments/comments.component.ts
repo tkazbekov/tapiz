@@ -6,6 +6,8 @@ import {
   Injector,
   ElementRef,
   viewChild,
+  effect,
+  untracked,
 } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 import { CommentsStore } from './comments.store';
@@ -96,6 +98,20 @@ export class CommentsComponent {
       startWith(true),
     ),
   );
+
+  constructor() {
+    // the comments of someone else's note are hidden along with its text
+    effect(() => {
+      const parentNodeId = this.commentsStore.parentNodeId();
+      const parent = parentNodeId
+        ? this.#boardFacade.nodes().find((it) => it.id === parentNodeId)
+        : undefined;
+
+      if (parent && this.#boardFacade.isMasked(parent)) {
+        untracked(() => this.commentsStore.clear());
+      }
+    });
+  }
 
   close() {
     this.commentsStore.clear();

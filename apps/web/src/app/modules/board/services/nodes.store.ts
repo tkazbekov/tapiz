@@ -27,10 +27,17 @@ export class NodesStore {
   }
 
   deleteNodes(nodes: { id: string; type: string }[], history?: boolean) {
+    // someone else's hidden note can't be removed until the reveal
+    const removable = nodes.filter((node) => !this.#isMasked(node.id));
+
+    if (!removable.length) {
+      return;
+    }
+
     this.#store.dispatch(
       BoardActions.batchNodeActions({
         history: history ?? true,
-        actions: nodes.map((node) => {
+        actions: removable.map((node) => {
           return {
             data: {
               type: node.type,
@@ -44,7 +51,10 @@ export class NodesStore {
   }
 
   copyNodes(nodes: TuNode[]) {
-    navigator.clipboard.writeText(JSON.stringify(nodes));
+    // a hidden note has no content to copy
+    const copyable = nodes.filter((node) => !this.#boardFacade.isMasked(node));
+
+    navigator.clipboard.writeText(JSON.stringify(copyable));
   }
 
   fetchMentions() {
@@ -244,7 +254,18 @@ export class NodesStore {
     );
   }
 
+  #isMasked(id: string) {
+    const node = this.#boardFacade.getNode(id);
+
+    return !!node && this.#boardFacade.isMasked(node);
+  }
+
   canMakeNotePublic(note: TuNode<Note>): boolean {
+    // the per-note visibility is moot while every note is hidden
+    if (this.#boardFacade.notesHidden()) {
+      return false;
+    }
+
     const allowPublicPosts =
       this.#boardFacade.settings()?.content.allowPublicPosts ?? false;
     const isAdmin = this.#store.selectSignal(boardPageFeature.selectIsAdmin)();

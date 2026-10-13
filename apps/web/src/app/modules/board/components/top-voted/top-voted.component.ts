@@ -6,11 +6,10 @@ import {
 } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { MatIconModule } from '@angular/material/icon';
-import { isNote } from '@tapiz/board-commons';
 import { BoardFacade } from '../../../../services/board-facade.service';
 import { BoardPageActions } from '../../actions/board-page.actions';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
-import { buildTopVotedItems } from './top-voted.utils';
+import { buildTopVotedItems, visibleNoteOwnerIds } from './top-voted.utils';
 import type { TopVotedItem } from './top-voted.utils';
 
 @Component({
@@ -70,20 +69,14 @@ export class TopVotedComponent {
 
   topItems = computed(() => {
     const nodes = this.#boardFacade.nodes();
-    const users = this.#boardFacade.usersNodes();
-    const currentUserId = this.#currentUserId();
-    const visibleNoteOwnerIds = new Set<string>();
-
-    nodes.filter(isNote).forEach((note) => {
-      const user = users.find((user) => user.id === note.content.ownerId);
-
-      if (!user || user.id === currentUserId || user.content.visible) {
-        visibleNoteOwnerIds.add(note.content.ownerId);
-      }
-    });
 
     return buildTopVotedItems(nodes, {
-      visibleNoteOwnerIds,
+      visibleNoteOwnerIds: visibleNoteOwnerIds(
+        nodes,
+        this.#boardFacade.usersNodes(),
+        this.#currentUserId(),
+        this.#boardFacade.notesHidden(),
+      ),
     });
   });
 

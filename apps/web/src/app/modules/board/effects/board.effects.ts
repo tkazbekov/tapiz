@@ -39,6 +39,8 @@ import {
 import { PingMessage, PingStore } from '../components/ping/ping.store';
 import { selectQueryParam } from '../../../router.selectors';
 import { filterNil } from 'ngxtension/filter-nil';
+import { filterHiddenNoteActions } from '../services/hidden-notes-actions';
+import { NotificationService } from '../../../shared/notification/notification.service';
 
 @Injectable()
 export class BoardEffects {
@@ -52,6 +54,7 @@ export class BoardEffects {
   private configService = inject(ConfigService);
   private liveReactionStore = inject(LiveReactionStore);
   private pingStore = inject(PingStore);
+  private notificationService = inject(NotificationService);
   public initBoard$ = createEffect(
     () => {
       return this.actions$.pipe(
@@ -71,8 +74,14 @@ export class BoardEffects {
       return this.actions$.pipe(
         ofType(BoardActions.batchNodeActions),
         tap((batch) => {
-          this.boardFacade.applyActions(batch.actions, batch.history);
-          this.wsService.send(batch.actions);
+          const actions = this.#withoutHiddenNoteEdits(batch.actions);
+
+          if (!actions.length) {
+            return;
+          }
+
+          this.boardFacade.applyActions(actions, batch.history);
+          this.wsService.send(actions);
         }),
       );
     },
@@ -103,7 +112,7 @@ export class BoardEffects {
   public setState$ = createEffect(
     () => {
       return this.actions$.pipe(
-        ofType(BoardActions.setState),
+        ofType(BoardActions.setState, BoardActions.resyncState),
         tap(({ data }) => {
           this.boardFacade.setState(data);
         }),
@@ -174,7 +183,9 @@ export class BoardEffects {
     return this.actions$.pipe(
       ofType(BoardPageActions.pasteNodes),
       map((action) => {
-        const batchActions = this.nodesActions.bulkAdd(action.nodes);
+        const batchActions = this.#withoutHiddenNoteEdits(
+          this.nodesActions.bulkAdd(action.nodes),
+        );
 
         this.boardFacade.applyActions(batchActions, true);
         this.wsService.send(batchActions);
@@ -403,4 +414,24 @@ export class BoardEffects {
     },
     { dispatch: false },
   );
+
+  // the server would reject these and drop the rest of the batch with them
+  #withoutHiddenNoteEdits<T extends StateActions>(actions: T[]) {
+    const filtered = filterHiddenNoteActions(
+      actions,
+      this.boardFacade.get(),
+      this.boardFacade.userId(),
+    );
+
+    if (filtered.blocked) {
+      this.notificationService.open({
+        message: 'Hidden notes can only be moved until they are revealed',
+        action: 'Close',
+        type: 'info',
+        durantion: 3000,
+      });
+    }
+
+    return filtered.actions;
+  }
 }

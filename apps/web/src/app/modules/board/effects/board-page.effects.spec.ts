@@ -9,6 +9,7 @@ import { ActivatedRoute } from '@angular/router';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { BoardApiService } from '../../../services/board-api.service';
 import { BoardPageActions } from '../actions/board-page.actions';
+import { BoardActions } from '../actions/board.actions';
 import { boardPageFeature } from '../reducers/boardPage.reducer';
 import { BoardPageEffects } from './board-page.effects';
 import { ConfigService } from '../../../services/config.service';
@@ -90,6 +91,39 @@ describe('BoardPageEffects', () => {
     await expect(result).resolves.toEqual(
       BoardPageActions.setPopupOpen({ popup: '' }),
     );
+  });
+
+  it('restores the initial view on the first setState, not on a resync', () => {
+    store.overrideSelector(boardPageFeature.selectBoardId, 'board-1');
+    store.refreshState();
+
+    const emitted: Action[] = [];
+    const subscription = effects.restoreUserView$.subscribe((action) =>
+      emitted.push(action),
+    );
+
+    actions$.next(
+      BoardPageActions.fetchBoardSuccess({
+        name: 'Board',
+        isAdmin: true,
+        isPublic: false,
+        privateId: '',
+        teamName: null,
+        teamId: null,
+      }),
+    );
+    // hiding or revealing notes resends the board, the view stays put
+    actions$.next(BoardActions.resyncState({ data: [] }));
+
+    expect(emitted).toEqual([]);
+
+    actions$.next(BoardActions.setState({ data: [] }));
+
+    expect(emitted).toEqual([
+      BoardPageActions.setUserView({ zoom: 1, position: { x: 0, y: 0 } }),
+    ]);
+
+    subscription.unsubscribe();
   });
 
   it('keeps sending mentions after one is refused', async () => {

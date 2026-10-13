@@ -3,12 +3,14 @@ import { Store } from '@ngrx/store';
 import { isBoardTuNode, NodeAdd, TuNode } from '@tapiz/board-commons';
 import { BoardPageActions } from '../modules/board/actions/board-page.actions';
 import { boardPageFeature } from '../modules/board/reducers/boardPage.reducer';
+import { BoardFacade } from './board-facade.service';
 
 @Injectable({
   providedIn: 'root',
 })
 export class CopyPasteService {
   private store = inject(Store);
+  private boardFacade = inject(BoardFacade);
 
   public readonly layer = this.store.selectSignal(
     boardPageFeature.selectBoardMode,
@@ -66,10 +68,18 @@ export class CopyPasteService {
         }
       }
 
+      // while notes are hidden only notes of your own can be added, so a
+      // copied note becomes the paster's
+      const owner =
+        this.boardFacade.notesHidden() && it.type === 'note'
+          ? { ownerId: this.boardFacade.userId() }
+          : {};
+
       return {
         ...it,
         content: {
           ...it.content,
+          ...owner,
           layer: this.layer(),
         },
         id: '',

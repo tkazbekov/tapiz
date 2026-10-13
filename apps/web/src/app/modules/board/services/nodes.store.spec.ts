@@ -5,6 +5,7 @@ import { vi, describe, beforeEach, it, expect } from 'vitest';
 import { Store } from '@ngrx/store';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { NodesActions } from './nodes-actions';
+import { isNoteMaskedFor, type Note, type TuNode } from '@tapiz/board-commons';
 
 vi.mock('@tapiz/cdk/utils/overlapping-nodes', () => ({
   overlappingNodes: (_rect: unknown, nodes: unknown[]) => nodes,
@@ -18,6 +19,7 @@ describe('NodesStore (Layer Manipulation)', () => {
   let nodesStore: NodesStore;
   let storeDispatch: ReturnType<typeof vi.fn>;
   let allNodes: TestNode[];
+  let notesHidden: boolean;
 
   interface TestNode {
     id: string;
@@ -39,14 +41,29 @@ describe('NodesStore (Layer Manipulation)', () => {
 
   beforeEach(() => {
     allNodes = [];
+    notesHidden = false;
     storeDispatch = vi.fn();
 
     const mockStore = {
       dispatch: storeDispatch,
+      // isAdmin
+      selectSignal: () => () => false,
     };
+
+    const settings = () => ({
+      id: 'settings',
+      type: 'settings',
+      content: { notesHidden },
+    });
 
     const mockBoardFacade = {
       nodes: () => allNodes,
+      getNode: (id: string) => allNodes.find((it) => it.id === id),
+      settings,
+      notesHidden: () => notesHidden,
+      isMasked: (node: TuNode) =>
+        isNoteMaskedFor(node, settings().content, 'me'),
+      currentUser: () => ({ id: 'me' }),
     };
 
     const mockNodesActions = {
@@ -109,6 +126,62 @@ describe('NodesStore (Layer Manipulation)', () => {
       expect(firstAction.actions[0].position).toBe(0);
       expect(secondAction.actions[0].data.id).toBe('2');
       expect(secondAction.actions[0].position).toBe(0);
+    });
+  });
+
+  describe('while notes are hidden', () => {
+    const note = (id: string, ownerId: string) =>
+      ({
+        id,
+        type: 'note',
+        content: { ownerId, position: { x: 0, y: 0 }, votes: [] },
+      }) as unknown as TuNode<Note> & TestNode;
+
+    it('lets nobody make a note public', () => {
+      const mine = note('1', 'me');
+
+      expect(nodesStore.canMakeNotePublic(mine)).toBe(true);
+
+      notesHidden = true;
+
+      expect(nodesStore.canMakeNotePublic(mine)).toBe(false);
+    });
+
+    it('only deletes the notes that can be removed', () => {
+      allNodes = [note('mine', 'me'), note('theirs', 'other')];
+      notesHidden = true;
+
+      nodesStore.deleteNodes([
+        { id: 'mine', type: 'note' },
+        { id: 'theirs', type: 'note' },
+      ]);
+
+      expect(storeDispatch).toHaveBeenCalledTimes(1);
+      expect(
+        storeDispatch.mock.calls[0][0].actions.map(
+          (it: { data: { id: string } }) => it.data.id,
+        ),
+      ).toEqual(['mine']);
+
+      storeDispatch.mockClear();
+      nodesStore.deleteNodes([{ id: 'theirs', type: 'note' }]);
+
+      expect(storeDispatch).not.toHaveBeenCalled();
+    });
+
+    it('does not copy hidden notes', () => {
+      const writeText = vi.fn();
+
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      notesHidden = true;
+
+      nodesStore.copyNodes([note('mine', 'me'), note('theirs', 'other')]);
+
+      expect(JSON.parse(writeText.mock.calls[0][0])).toEqual([
+        note('mine', 'me'),
+      ]);
+
+      vi.unstubAllGlobals();
     });
   });
 });

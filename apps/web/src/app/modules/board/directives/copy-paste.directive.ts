@@ -33,8 +33,11 @@ export class CopyPasteDirective {
   public copy() {
     const nodes = this.boardFacade.nodes();
 
-    const copyNodes = nodes.filter((node) =>
-      this.selectFocusId().includes(node.id),
+    // a hidden note has no content to copy
+    const copyNodes = nodes.filter(
+      (node) =>
+        this.selectFocusId().includes(node.id) &&
+        !this.boardFacade.isMasked(node),
     );
 
     if (copyNodes) {

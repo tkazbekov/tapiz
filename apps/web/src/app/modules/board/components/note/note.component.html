@@ -9,7 +9,7 @@
   (dragging)="onDrag()">
   <div class="inner">
     <div class="top-info">
-      @if (comments()) {
+      @if (comments() && !masked()) {
         <button
           type="button"
           class="comments"
@@ -26,7 +26,14 @@
         </div>
       }
     </div>
-    @if (edit()) {
+    @if (masked()) {
+      <div class="hidden-card">
+        <svg
+          lucideEyeClosed
+          size="28"></svg>
+        <span>Hidden until reveal</span>
+      </div>
+    } @else if (edit()) {
       <tapiz-editor-portal [node]="node()">
         <tapiz-editor-view
           [class.readonly]="!edit()"
@@ -63,15 +70,17 @@
         {{ username() }}
       </div>
     }
-    @for (emoji of node().content.emojis; track emoji) {
-      <div
-        class="emoji"
-        [style.left.px]="emoji.position.x"
-        [style.top.px]="emoji.position.y">
-        {{ emoji.unicode }}
-      </div>
+    @if (!masked()) {
+      @for (emoji of node().content.emojis; track emoji) {
+        <div
+          class="emoji"
+          [style.left.px]="emoji.position.x"
+          [style.top.px]="emoji.position.y">
+          {{ emoji.unicode }}
+        </div>
+      }
     }
-    @if (visible()) {
+    @if (visible() && !masked()) {
       <canvas
         [tapizDrawing]="node().content.drawing"
         (drawing)="setDrawing($event)"

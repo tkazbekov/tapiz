@@ -6,6 +6,7 @@ import {
   type Note,
   type Panel,
   type TuNode,
+  type User,
 } from '@tapiz/board-commons';
 import { getNodeSize } from '../../../../shared/node-size';
 
@@ -19,6 +20,36 @@ export type TopVotedItem = {
   votes: number;
   containedItems: number;
 };
+
+/**
+ * The owners whose notes can be listed: your own, users with public notes and
+ * users who left the board. While notes are hidden only your own, the rest
+ * are blank cards until the reveal.
+ */
+export function visibleNoteOwnerIds(
+  nodes: TuNode[],
+  users: TuNode<Pick<User, 'visible'>>[],
+  currentUserId: string,
+  notesHidden: boolean,
+) {
+  const ownerIds = new Set<string>();
+
+  if (notesHidden) {
+    ownerIds.add(currentUserId);
+
+    return ownerIds;
+  }
+
+  nodes.filter(isNote).forEach((note) => {
+    const user = users.find((user) => user.id === note.content.ownerId);
+
+    if (!user || user.id === currentUserId || user.content.visible) {
+      ownerIds.add(note.content.ownerId);
+    }
+  });
+
+  return ownerIds;
+}
 
 export function buildTopVotedItems(
   nodes: TuNode[],

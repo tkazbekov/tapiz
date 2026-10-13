@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { describe, beforeEach, it, expect, vi } from 'vitest';
+import { isNoteMaskedFor } from '@tapiz/board-commons';
 import type { TuNode, UserVote } from '@tapiz/board-commons';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { NotificationService } from '../../../shared/notification/notification.service';
@@ -44,6 +45,7 @@ describe('VotesService', () => {
             nodes,
             userId: signal('me'),
             settings: () => nodes().find((it) => it.type === 'settings'),
+            isMasked: (node: TuNode) => isNoteMaskedFor(node, nodes(), 'me'),
           },
         },
         { provide: NotificationService, useValue: { open: notify } },
@@ -90,6 +92,31 @@ describe('VotesService', () => {
 
     // taking a vote back is always allowed
     service.vote(target, 'note', click(2));
+
+    expect(dispatchedVotes()).toEqual([[{ userId: 'me', vote: 1 }]]);
+  });
+
+  it('does not vote on someone else’s note while notes are hidden', () => {
+    const theirs: TuNode<{ votes: UserVote[]; ownerId: string }> = {
+      id: 'n1',
+      type: 'note',
+      content: { votes: [{ userId: 'me', vote: 1 }], ownerId: 'other' },
+    };
+    const mine = { ...theirs, id: 'n2', content: { votes: [], ownerId: 'me' } };
+
+    nodes.set([
+      { id: 'settings', type: 'settings', content: { notesHidden: true } },
+      theirs,
+      mine,
+    ]);
+
+    service.vote(theirs, 'note', click(0));
+    service.vote(theirs, 'note', click(2));
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(2);
+
+    service.vote(mine, 'note', click(0));
 
     expect(dispatchedVotes()).toEqual([[{ userId: 'me', vote: 1 }]]);
   });

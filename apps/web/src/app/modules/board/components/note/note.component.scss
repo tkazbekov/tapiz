@@ -172,6 +172,25 @@ textarea {
   }
 }
 
+.hidden-card {
+  align-items: center;
+  block-size: 100%;
+  color: var(--contrast-color);
+  display: flex;
+  flex-direction: column;
+  font-family:
+    "Inter",
+    -apple-system,
+    system-ui,
+    sans-serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+  gap: var(--spacing-2);
+  justify-content: center;
+  opacity: 0.7;
+  text-align: center;
+}
+
 .emoji {
   position: absolute;
   font-family: "Twemoji Mozilla", "Apple Color Emoji", "Segoe UI Emoji",

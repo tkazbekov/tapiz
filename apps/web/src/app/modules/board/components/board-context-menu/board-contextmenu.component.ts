@@ -86,6 +86,11 @@ export class BoardContextMenuComponent implements OnInit {
         const currentNodes = this.selectFocusNodes();
 
         if (currentNodes?.length) {
+          // someone else's notes while notes are hidden, they can only move
+          const allMasked = currentNodes.every((node) =>
+            this.boardFacade.isMasked(node),
+          );
+
           const actions: ContextMenuItem[] = [
             {
               label: 'Copy',
@@ -93,21 +98,6 @@ export class BoardContextMenuComponent implements OnInit {
               help: 'Ctrl + C',
               action: () => {
                 this.nodesStore.copyNodes(currentNodes);
-              },
-            },
-            {
-              label: 'Delete',
-              icon: 'delete',
-              help: 'Supr',
-              action: () => {
-                this.nodesStore.deleteNodes(
-                  currentNodes.map((it) => {
-                    return {
-                      id: it.id,
-                      type: it.type,
-                    };
-                  }),
-                );
               },
             },
             {
@@ -143,6 +133,24 @@ export class BoardContextMenuComponent implements OnInit {
               },
             },
           ];
+
+          if (!allMasked) {
+            actions.splice(1, 0, {
+              label: 'Delete',
+              icon: 'delete',
+              help: 'Supr',
+              action: () => {
+                this.nodesStore.deleteNodes(
+                  currentNodes.map((it) => {
+                    return {
+                      id: it.id,
+                      type: it.type,
+                    };
+                  }),
+                );
+              },
+            });
+          }
 
           // only board admins can move nodes between the board modes
           if (this.isAdmin() && this.boardMode() === 0) {
@@ -203,7 +211,7 @@ export class BoardContextMenuComponent implements OnInit {
 
           if (currentNodes.length === 1) {
             const note = currentNodes[0];
-            if (isNote(note)) {
+            if (isNote(note) && !allMasked) {
               actions.push(
                 {
                   label: 'Comments',

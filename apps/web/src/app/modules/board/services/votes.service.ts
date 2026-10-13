@@ -44,6 +44,17 @@ export class VotesService {
       return;
     }
 
+    // nobody votes on someone else's note before the reveal
+    if (this.#boardFacade.isMasked(node)) {
+      this.#notificationService.open({
+        message: 'Voting on this note opens after the reveal',
+        action: 'Close',
+        type: 'info',
+        durantion: 3000,
+      });
+      return;
+    }
+
     if (delta > 0 && this.votesLeft() === 0) {
       this.#notificationService.open({
         message: 'No votes left',

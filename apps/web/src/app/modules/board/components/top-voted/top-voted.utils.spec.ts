@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { Group, Note, Panel, TuNode } from '@tapiz/board-commons';
-import { buildTopVotedItems, cleanNodeText, sumVotes } from './top-voted.utils';
+import type { Group, Note, Panel, TuNode, User } from '@tapiz/board-commons';
+import {
+  buildTopVotedItems,
+  cleanNodeText,
+  sumVotes,
+  visibleNoteOwnerIds,
+} from './top-voted.utils';
 
 describe('top-voted utils', () => {
   it('sums votes using the board vote semantics', () => {
@@ -54,6 +59,44 @@ describe('top-voted utils', () => {
       votes: 3,
       containedItems: 1,
     });
+  });
+
+  it('lists notes of users who made them public', () => {
+    const nodes: TuNode[] = [
+      note('mine', 0, 0, 'me', '<p>Mine</p>', 1),
+      note('public', 0, 0, 'public-user', '<p>Public</p>', 1),
+      note('private', 0, 0, 'private-user', '<p>Private</p>', 1),
+      note('left', 0, 0, 'left-user', '<p>Left</p>', 1),
+    ];
+
+    expect(
+      visibleNoteOwnerIds(
+        nodes,
+        [user('public-user', true), user('private-user', false)],
+        'me',
+        false,
+      ),
+    ).toEqual(new Set(['me', 'public-user', 'left-user']));
+  });
+
+  it('only lists your own notes while notes are hidden', () => {
+    const nodes: TuNode[] = [
+      note('mine', 0, 0, 'me', '<p>Mine</p>', 1),
+      note('public', 0, 0, 'public-user', '', 5),
+    ];
+    const ownerIds = visibleNoteOwnerIds(
+      nodes,
+      [user('public-user', true)],
+      'me',
+      true,
+    );
+
+    expect(ownerIds).toEqual(new Set(['me']));
+    expect(
+      buildTopVotedItems(nodes, { visibleNoteOwnerIds: ownerIds }).map(
+        (it) => it.id,
+      ),
+    ).toEqual(['mine']);
   });
 
   it('cleans html text for compact result labels', () => {
@@ -130,4 +173,8 @@ function panel(
       drawing: [],
     },
   };
+}
+
+function user(id: string, visible: boolean): TuNode<Pick<User, 'visible'>> {
+  return { id, type: 'user', content: { visible } };
 }

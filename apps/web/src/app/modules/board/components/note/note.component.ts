@@ -49,6 +49,7 @@ import { boardPageFeature } from '../../reducers/boardPage.reducer';
 import { BoardPageActions } from '../../actions/board-page.actions';
 import { NodeToolbarComponent } from '../node-toolbar/node-toolbar.component';
 import { appFeature } from '../../../../+state/app.reducer';
+import { LucideEyeClosed } from '@lucide/angular';
 
 @Component({
   selector: 'tapiz-note',
@@ -64,6 +65,7 @@ import { appFeature } from '../../../../+state/app.reducer';
     EditorPortalComponent,
     PortalComponent,
     NodeToolbarComponent,
+    LucideEyeClosed,
   ],
   host: {
     '[class.drawing]': 'drawing()',
@@ -73,6 +75,7 @@ import { appFeature } from '../../../../+state/app.reducer';
     '[class.active-layer]': 'activeLayer()',
     '[class.drop-animation]': 'dropAnimation()',
     '[class.drag-animation]': 'dragAnimation()',
+    '[class.masked]': 'masked()',
     '[style.--custom-fg]': '"#000"',
     '[style.--custom-light]': 'lightColor()',
     '[style.--custom-main]': 'color()',
@@ -217,6 +220,12 @@ export class NoteComponent {
   });
 
   mentions = this.#mentions;
+
+  // someone else's note while notes are hidden: a blank card that can only
+  // be moved or resized until the reveal
+  masked = computed(() => {
+    return this.#boardFacade.notesHidden() && !this.isOwner();
+  });
 
   visible = hostBinding(
     'class.visible',
@@ -373,6 +382,12 @@ export class NoteComponent {
       }
     });
 
+    explicitEffect([this.masked], ([masked]) => {
+      if (masked) {
+        this.edit.set(false);
+      }
+    });
+
     afterNextRender(() => {
       if (this.focus() && !this.pasted()) {
         this.initEdit();
@@ -411,7 +426,7 @@ export class NoteComponent {
 
   @HostListener('dblclick', ['$event'])
   dblclick(event: MouseEvent) {
-    if (this.drawing() || !this.visible()) {
+    if (this.drawing() || !this.visible() || this.masked()) {
       return;
     }
 
@@ -434,6 +449,11 @@ export class NoteComponent {
     );
 
     return { width, height };
+  }
+
+  // the Delete key skips notes that can't be removed before the reveal
+  preventDelete() {
+    return this.masked();
   }
 
   isOwner() {
@@ -518,6 +538,10 @@ export class NoteComponent {
   }
 
   #emojiEvent(event: MouseEvent) {
+    if (this.masked()) {
+      return;
+    }
+
     const zoom = this.#zoom();
     const { width, height } = this.emojisSize();
     const targetPosition = this.nativeElement.getBoundingClientRect();

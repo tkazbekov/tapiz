@@ -6,6 +6,8 @@ import {
   BoardTuNode,
   StateActions,
   TuNode,
+  isNoteMaskedFor,
+  isNotesHidden,
   isTimer,
   isUserNode,
 } from '@tapiz/board-commons';
@@ -68,11 +70,19 @@ export class BoardFacade {
       | undefined;
   });
 
+  // other users' notes arrive as blank cards until an admin reveals them
+  notesHidden = computed(() => isNotesHidden(this.settings()?.content));
+
   focusIds = this.store.selectSignal(boardPageFeature.selectFocusId);
 
   focusNodes = computed(() => {
     return this.nodes().filter((note) => this.focusIds().includes(note.id));
   });
+
+  // someone else's note while notes are hidden
+  isMasked(node: TuNode) {
+    return isNoteMaskedFor(node, this.settings()?.content, this.userId());
+  }
 
   start() {
     this.board.update(() => {
