@@ -22,7 +22,7 @@ export const layoutSpecSchema = z
     cells: z.array(layoutCellSchema).min(1).max(24),
     gridColumns: z.number().int().min(1).max(6).optional(),
     noteColumns: z.number().int().min(1).max(4).optional(),
-    // quadrants only: [low, high] captions along each axis
+    // quadrants only: captions in reading order, x [left, right], y [top, bottom]
     axes: z
       .object({ x: axisLabels.optional(), y: axisLabels.optional() })
       .optional(),

@@ -45,7 +45,7 @@ describe('text presets', () => {
       '<p><span style="line-height: 1.3">Hi</span></p>',
     );
     expect(presetHtml({ preset: 'caption', text: 'Hi' })).toBe(
-      '<p><span style="color: #868e96; font-size: 18px; line-height: 1.3">Hi</span></p>',
+      '<p><span style="color: #868e96; font-size: 28px; line-height: 1.3">Hi</span></p>',
     );
   });
 

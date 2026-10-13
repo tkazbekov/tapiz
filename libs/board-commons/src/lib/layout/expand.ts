@@ -103,7 +103,7 @@ export function expandLayout(
 
   const headers = spec.cells.map((cell) =>
     presetHtml([
-      { preset: 'heading', text: cell.title },
+      { preset: 'title', text: cell.title },
       ...(cell.subtitle
         ? [{ preset: 'caption' as const, text: cell.subtitle }]
         : []),
@@ -139,7 +139,7 @@ export function expandLayout(
   if (spec.title) {
     texts.push(
       textNode('title', { x: left, y: top }, gridWidth, [
-        { preset: 'title', text: spec.title },
+        { preset: 'display', text: spec.title },
       ]),
     );
     top += heightOf(texts[texts.length - 1]);
@@ -148,7 +148,7 @@ export function expandLayout(
   if (spec.description) {
     texts.push(
       textNode('description', { x: left, y: top }, gridWidth, [
-        { preset: 'body', text: spec.description },
+        { preset: 'caption', text: spec.description },
       ]),
     );
     top += heightOf(texts[texts.length - 1]);
@@ -218,19 +218,19 @@ export function expandLayout(
     };
   });
 
-  const [yLow, yHigh] = spec.axes?.y ?? [];
-  const [xLow, xHigh] = spec.axes?.x ?? [];
+  const [yTop, yBottom] = spec.axes?.y ?? [];
+  const [xLeft, xRight] = spec.axes?.x ?? [];
   const rowCenter = (row: number) =>
     top + row * (cellHeight + CELL_GAP) + cellHeight / 2;
   const axisY = top + gridHeight + AXIS_GAP;
 
   const axisTexts = [
-    { ref: 'axis-y-1', text: yHigh, x: 0, y: rowCenter(0), align: 'right' },
-    { ref: 'axis-y-0', text: yLow, x: 0, y: rowCenter(1), align: 'right' },
-    { ref: 'axis-x-0', text: xLow, x: left, y: axisY, align: 'left' },
+    { ref: 'axis-y-0', text: yTop, x: 0, y: rowCenter(0), align: 'right' },
+    { ref: 'axis-y-1', text: yBottom, x: 0, y: rowCenter(1), align: 'right' },
+    { ref: 'axis-x-0', text: xLeft, x: left, y: axisY, align: 'left' },
     {
       ref: 'axis-x-1',
-      text: xHigh,
+      text: xRight,
       x: left + gridWidth - AXIS_WIDTH,
       y: axisY,
       align: 'right',

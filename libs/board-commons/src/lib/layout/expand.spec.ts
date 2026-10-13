@@ -208,6 +208,16 @@ describe('expandLayout', () => {
     ).toBe(0);
   });
 
+  it('places axis captions in reading order', () => {
+    const { template } = expand(quadrants);
+    const at = (text: string) =>
+      template.nodes.find((node) => String(node.content['text']).includes(text))
+        ?.content.position;
+
+    expect(at('Low value')!.y).toBeLessThan(at('High value')!.y);
+    expect(at('Low effort')!.x).toBeLessThan(at('High effort')!.x);
+  });
+
   it('never sets the panel color and never emits raw headings', () => {
     [retro, quadrants, grid].forEach((spec) => {
       expand(spec).template.nodes.forEach((node) => {
@@ -246,12 +256,15 @@ describe('expandLayout', () => {
     const title = 'a rather long heading '.repeat(8).trim();
     const subtitle = 'with a long caption under it '.repeat(16).trim();
     const header = presetHtml([
-      { preset: 'heading', text: title },
+      { preset: 'title', text: title },
       { preset: 'caption', text: subtitle },
     ]);
+    const short = presetHtml({ preset: 'title', text: 'Short' });
     const long = band(title, subtitle);
 
-    expect(band('Short')).toBe(120);
+    expect(band('Short')).toBe(
+      Math.max(120, estimatePanelTextBottom(short, 720) + 28),
+    );
     expect(long).toBe(estimatePanelTextBottom(header, 720) + 28);
     expect(long).toBeGreaterThan(400);
   });

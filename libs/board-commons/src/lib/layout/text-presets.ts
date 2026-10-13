@@ -17,7 +17,7 @@ export const TEXT_PRESETS: Record<TextPreset, TextPresetStyle> = {
   subheading: { fontSize: 28, lineHeight: 1.25, bold: true },
   body: { fontSize: null, lineHeight: 1.3 },
   label: { fontSize: 20, lineHeight: 1.3, bold: true },
-  caption: { fontSize: 18, lineHeight: 1.3, color: '#868e96' },
+  caption: { fontSize: 28, lineHeight: 1.3, color: '#868e96' },
 };
 
 export const DEFAULT_FONT_SIZE = 24;
