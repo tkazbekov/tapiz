@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server as WsServer } from 'socket.io';
 import { vi } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   expandLayout,
   type LayoutSpecInput,
@@ -322,6 +322,30 @@ describe('insertTemplateAsMcpUser', () => {
           }),
         );
       });
+  });
+
+  it('waits for an unloading board to be written before reading it back', async () => {
+    const server = newServer();
+    const board = await getUserCaller(1).board.create({ name: 'unload' });
+
+    await server.createBoard(board.id);
+    server.applyAction(board.id, [
+      { op: 'add', data: note('unloading-note', getAuth(1).sub) },
+    ]);
+
+    let read: Promise<TuNode[] | undefined> | undefined;
+
+    await drizzle.transaction(async (tx) => {
+      // holds the row, so the unload's write waits for this transaction
+      await tx.execute(
+        sql`select id from boards where id = ${board.id} for update`,
+      );
+      server.emptyBoard(board.id);
+      read = server.readBoard(board.id);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    expect((await read)?.map((it) => it.id)).toContain('unloading-note');
   });
 
   it('refuses a board the user cannot access', async () => {

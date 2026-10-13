@@ -315,6 +315,20 @@ export class Server {
     return this.state[boardId].get();
   }
 
+  // the live board, else the stored one; a board unloaded a moment ago is
+  // still being written, so wait for that write before reading it back
+  public async readBoard(boardId: string): Promise<TuNode[] | undefined> {
+    const live = this.getBoard(boardId);
+
+    if (live) {
+      return live;
+    }
+
+    await this.pendingFlush[boardId];
+
+    return this.getBoard(boardId) ?? (await db.board.getBoard(boardId))?.board;
+  }
+
   public setState(boardId: string, fn: (state: TuNode[]) => TuNode[]) {
     if (!this.state[boardId]) {
       return;

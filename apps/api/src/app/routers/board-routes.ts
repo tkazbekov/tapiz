@@ -124,7 +124,7 @@ export const boardRouter = router({
     // the live board is newer than the stored one, and the copy only gets
     // what the copier can see of hidden notes
     const board = maskNodesForViewer(
-      getServer()?.getBoard(req.input.boardId) ?? req.ctx.board.board,
+      (await getServer()?.readBoard(req.input.boardId)) ?? req.ctx.board.board,
       req.ctx.user.sub,
     );
 
