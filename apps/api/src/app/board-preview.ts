@@ -1,5 +1,6 @@
 import {
   estimateNoteFontPx,
+  isAppTemplateAssetUrl,
   isCocomaterialUrl,
   nodeBounds,
   nodeSize,
@@ -15,8 +16,9 @@ import { PreviewRenderError, renderSvgToPng } from './preview-renderer.js';
 
 /*
  * A server-side PNG of part of a board, for agents that can't open a browser.
- * The caller masks the board for the viewer first. Only Cocomaterial art is
- * fetched; every other image is a labelled placeholder (no SSRF).
+ * The caller masks the board for the viewer first. Only Cocomaterial art and
+ * the web app's own template art (from FRONTEND_URL) are fetched; every other
+ * image is a labelled placeholder (no SSRF).
  */
 
 // runtime nodes that are not drawn on the board
@@ -1453,6 +1455,48 @@ function fetchUrlOf(url: string) {
   return `${parsed.origin}${parsed.pathname}`;
 }
 
+// the web app's template art (assets/templates/...), fetched from the
+// configured web origin only
+function appAssetFetchUrl(url: string): string | { skip: string } {
+  const frontend = process.env['FRONTEND_URL'];
+
+  if (!frontend) {
+    return { skip: 'app asset without FRONTEND_URL' };
+  }
+
+  try {
+    const resolved = new URL(url, frontend);
+
+    if (resolved.origin !== new URL(frontend).origin) {
+      return { skip: 'app asset outside FRONTEND_URL' };
+    }
+
+    return `${resolved.origin}${resolved.pathname}`;
+  } catch {
+    return { skip: 'app asset without FRONTEND_URL' };
+  }
+}
+
+function previewFetchUrl(url: string): string | { skip: string } {
+  if (isCocomaterialUrl(url)) {
+    return fetchUrlOf(url);
+  }
+
+  if (isAppTemplateAssetUrl(url)) {
+    return appAssetFetchUrl(url);
+  }
+
+  return { skip: 'not a https cocomaterial.com url' };
+}
+
+const sameOrigin = (a: string, b: string) => {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+};
+
 // external references inside fetched SVG must not reach the renderer
 function neutralizeSvgRefs(svg: string) {
   return svg.replace(/(\bhref\s*=\s*)(?:"(?!#)[^"]*"|'(?!#)[^']*')/gi, '$1"#"');
@@ -1508,11 +1552,7 @@ async function fetchAsset(url: string, fetchFn: typeof fetch): Promise<string> {
     throw new AssetError(`http ${response.status}`);
   }
 
-  if (
-    response.url &&
-    response.url !== url &&
-    !isCocomaterialUrl(response.url)
-  ) {
+  if (response.url && response.url !== url && !sameOrigin(response.url, url)) {
     throw new AssetError('redirect');
   }
 
@@ -1556,7 +1596,8 @@ const assetUrls = (nodes: TuNode[]) => [
 
 /**
  * Fetches the art of the vector and image nodes. Only https Cocomaterial urls
- * are requested; the rest (uploads included) are skipped with a reason.
+ * and the app's assets/templates art (on FRONTEND_URL) are requested; the
+ * rest (uploads included) are skipped with a reason.
  */
 export async function loadPreviewAssets(
   nodes: TuNode[],
@@ -1572,11 +1613,11 @@ export async function loadPreviewAssets(
   const pending = new Map<string, string[]>();
 
   for (const url of assetUrls(nodes)) {
-    const key = isCocomaterialUrl(url) ? fetchUrlOf(url) : null;
-    const cached = key === null ? undefined : cacheGet(key);
+    const key = previewFetchUrl(url);
+    const cached = typeof key === 'string' ? cacheGet(key) : undefined;
 
-    if (key === null) {
-      skipped.push({ url, reason: 'not a https cocomaterial.com url' });
+    if (typeof key !== 'string') {
+      skipped.push({ url, reason: key.skip });
     } else if (cached !== undefined) {
       assets.set(url, cached);
     } else if (pending.has(key)) {

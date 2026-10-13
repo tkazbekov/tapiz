@@ -7,8 +7,8 @@ import {
   resolveArrowGeometry,
 } from './geometry.js';
 import {
-  PORTABLE_URL_PATTERN,
   TEMPLATE_NODE_TYPES,
+  isPortableAssetUrl,
   isTemplateRef,
   type BoardTemplateData,
   type BoardTemplateNode,
@@ -60,7 +60,7 @@ function dropReason(
   if (node.type === 'image' || node.type === 'vector') {
     const url = (node.content as { url?: unknown }).url;
 
-    if (typeof url !== 'string' || !PORTABLE_URL_PATTERN.test(url)) {
+    if (typeof url !== 'string' || !isPortableAssetUrl(url)) {
       return 'board_scoped_asset';
     }
   }

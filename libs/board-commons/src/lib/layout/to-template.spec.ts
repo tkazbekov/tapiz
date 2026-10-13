@@ -145,8 +145,11 @@ describe('templateFromNodes', () => {
         asset('upload', 'image', 'a1b2c3.png'),
         asset('data-vector', 'vector', 'data:image/svg+xml;base64,PHN2Zz4='),
         asset('relative-vector', 'vector', 'assets/x.svg'),
+        asset('traversal-vector', 'vector', 'assets/templates/../x.svg'),
         asset('web-image', 'image', 'https://example.com/x.png'),
         asset('web-vector', 'vector', 'http://example.com/x.svg'),
+        asset('app-vector', 'vector', 'assets/templates/movie/a-v1.svg'),
+        asset('app-image', 'image', 'assets/templates/movie/b.webp'),
       ],
       {
         isMasked: (node) =>
@@ -159,6 +162,8 @@ describe('templateFromNodes', () => {
       'mine',
       'web-image',
       'web-vector',
+      'app-vector',
+      'app-image',
     ]);
     expect(dropped).toEqual([
       { id: 'theirs', type: 'note', reason: 'masked_note' },
@@ -166,6 +171,7 @@ describe('templateFromNodes', () => {
       { id: 'upload', type: 'image', reason: 'board_scoped_asset' },
       { id: 'data-vector', type: 'vector', reason: 'board_scoped_asset' },
       { id: 'relative-vector', type: 'vector', reason: 'board_scoped_asset' },
+      { id: 'traversal-vector', type: 'vector', reason: 'board_scoped_asset' },
     ]);
     expect(parseBoardTemplate(data).ok).toBe(true);
   });

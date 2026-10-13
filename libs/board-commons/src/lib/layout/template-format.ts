@@ -41,6 +41,20 @@ export const isTemplateRef = (ref: string) =>
 // uploads are stored as bare file names scoped to their board
 export const PORTABLE_URL_PATTERN = /^https?:\/\//i;
 
+// the web app's own template art (apps/web/src/assets/templates), same-origin
+// static files that resolve on every board. Every folder and the file name is
+// a non-empty segment led by a letter or digit, so there is no empty segment,
+// dot segment, scheme, query or encoding
+export const APP_TEMPLATE_ASSET_PATTERN =
+  /^assets\/templates\/(?:[a-z0-9][a-z0-9_-]*\/)*[a-z0-9][a-z0-9_-]*\.(svg|webp|png)$/;
+
+export const isAppTemplateAssetUrl = (url: string) =>
+  APP_TEMPLATE_ASSET_PATTERN.test(url);
+
+// what a template image or vector may point at: http(s) or the app's art
+export const isPortableAssetUrl = (url: string) =>
+  PORTABLE_URL_PATTERN.test(url) || isAppTemplateAssetUrl(url);
+
 export interface BoardTemplateNode {
   ref: string;
   type: TemplateNodeType;
@@ -71,7 +85,10 @@ const portableUrl = (max: number) =>
   z
     .string()
     .max(max)
-    .regex(PORTABLE_URL_PATTERN, 'Only http(s) urls work on another board');
+    .refine(
+      isPortableAssetUrl,
+      'Only http(s) urls or assets/templates/ art work on another board',
+    );
 
 interface LimitedContent {
   position: Point;

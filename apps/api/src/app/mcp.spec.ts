@@ -84,11 +84,14 @@ describe('mcp', () => {
 
   it('tells the LLM when to use a built-in retro and how to relabel it', () => {
     const route =
-      'For a standard starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the built-in template; use create_layout only for custom or themed variants';
+      'For a standard movie, starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the built-in template; use create_layout only for custom or themed variants';
 
     // the same decision in the template and the layout guidance
     expect(TAPIZ_MCP_INSTRUCTIONS.split(route)).toHaveLength(3);
     expect(TAPIZ_MCP_INSTRUCTIONS).not.toContain('starfish retros), call');
+    // the movie retro is a built-in, not a themed create_layout example
+    expect(TAPIZ_MCP_INSTRUCTIONS).toContain('builtin:movie-retrospective');
+    expect(TAPIZ_MCP_INSTRUCTIONS).not.toContain('movie night');
     expect(TAPIZ_MCP_INSTRUCTIONS).toContain('relabelling is optional');
     expect(TAPIZ_MCP_INSTRUCTIONS).toContain(
       'call get_template with includeData: true to see each ref',
@@ -157,11 +160,7 @@ describe('mcp', () => {
       ]),
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    const persistedBoard = await db.board.getBoard(board.id);
-
-    expect(persistedBoard?.board).toEqual(
+    expect(await server.readBoard(board.id)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: noteId,
@@ -320,19 +319,18 @@ describe('mcp', () => {
 
       return JSON.parse(text);
     };
-    const persisted = async (boardId: string) => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      return (await db.board.getBoard(boardId))?.board ?? [];
-    };
+    // the board as stored once the MCP client's final write has landed
+    const persisted = async (server: Server, boardId: string) =>
+      (await server.readBoard(boardId)) ?? [];
 
     it('rejects a layer-1 node from a member and applies nothing', async () => {
+      const server = newServer();
       const board = await teamBoard('mcp member layers');
       const member = mcpUser(2);
       const noteId = randomUUID();
 
       const result = await applyBoardActionsAsMcpUser(
-        newServer(),
+        server,
         member,
         board.id,
         [panelAction(randomUUID()), noteAction(noteId, member.id)],
@@ -354,12 +352,13 @@ describe('mcp', () => {
           code: 'batch_aborted',
         }),
       ]);
-      expect((await persisted(board.id)).some((it) => it.id === noteId)).toBe(
-        false,
-      );
+      expect(
+        (await persisted(server, board.id)).some((it) => it.id === noteId),
+      ).toBe(false);
     });
 
     it('applies a note and a comment on it in one batch', async () => {
+      const server = newServer();
       const board = await getUserCaller(1).board.create({
         name: 'mcp same batch',
       });
@@ -367,37 +366,34 @@ describe('mcp', () => {
       const noteId = randomUUID();
       const commentId = randomUUID();
 
-      const result = await applyBoardActionsAsMcpUser(
-        newServer(),
-        user,
-        board.id,
-        [
-          noteAction(noteId, user.id),
-          {
-            op: 'patch',
-            data: {
-              id: noteId,
-              type: 'note',
-              content: { text: '<p>edited</p>' },
-            },
+      const result = await applyBoardActionsAsMcpUser(server, user, board.id, [
+        noteAction(noteId, user.id),
+        {
+          op: 'patch',
+          data: {
+            id: noteId,
+            type: 'note',
+            content: { text: '<p>edited</p>' },
           },
-          {
-            op: 'add',
-            parent: noteId,
-            data: {
-              id: commentId,
-              type: 'comment',
-              content: { text: 'first', userId: user.id, date: 1 },
-            },
+        },
+        {
+          op: 'add',
+          parent: noteId,
+          data: {
+            id: commentId,
+            type: 'comment',
+            content: { text: 'first', userId: user.id, date: 1 },
           },
-        ],
-      );
+        },
+      ]);
 
       expect(result.status).toBe('applied');
       expect(result.rejected).toEqual([]);
       expect(result.appliedActions).toHaveLength(3);
 
-      const note = (await persisted(board.id)).find((it) => it.id === noteId);
+      const note = (await persisted(server, board.id)).find(
+        (it) => it.id === noteId,
+      );
 
       expect(note?.content).toMatchObject({ text: '<p>edited</p>' });
       expect(note?.children).toEqual([
@@ -406,6 +402,7 @@ describe('mcp', () => {
     });
 
     it('reports read_only for a member on a read-only board', async () => {
+      const server = newServer();
       const board = await teamBoard('mcp read only');
       const member = mcpUser(2);
 
@@ -414,7 +411,7 @@ describe('mcp', () => {
       ]);
 
       const result = await applyBoardActionsAsMcpUser(
-        newServer(),
+        server,
         member,
         board.id,
         [noteAction(randomUUID(), member.id)],
@@ -429,7 +426,7 @@ describe('mcp', () => {
         }),
       ]);
       expect(
-        (await persisted(board.id)).filter((it) => it.type === 'note'),
+        (await persisted(server, board.id)).filter((it) => it.type === 'note'),
       ).toEqual([]);
     });
 
@@ -616,7 +613,7 @@ describe('mcp', () => {
 
       expect(dryRun.status).toBe('dry_run');
       expect(dryRun.nodes.length).toBe(dryRun.nodeCount);
-      expect(await persisted(board.id)).toEqual([]);
+      expect(await persisted(server, board.id)).toEqual([]);
 
       const created = await callToolAs(server, admin, 'create_layout', {
         boardId: board.id,
@@ -628,7 +625,7 @@ describe('mcp', () => {
       expect(created.layerCoerced).toBe(false);
       expect(created.cells).toHaveLength(2);
 
-      const nodes = await persisted(board.id);
+      const nodes = await persisted(server, board.id);
       const [first] = created.cells;
       const firstPanel = nodes.find((it) => it.id === first.panelId);
 
@@ -754,7 +751,7 @@ describe('mcp', () => {
       expect(created.lint).toEqual([]);
       expect(created.cells).toHaveLength(5);
 
-      const nodes = await persisted(board.id);
+      const nodes = await persisted(server, board.id);
       const vectors = nodes.filter((it) => it.type === 'vector');
 
       expect(vectors.map((it) => it.content)).toEqual([
@@ -867,7 +864,7 @@ describe('mcp', () => {
         expect(created.status).toBe('applied');
 
         // the closed MCP client flushes the board to the database
-        await persisted(board.id);
+        await persisted(server, board.id);
 
         const result = await callPreview(server, admin, {
           boardId: board.id,
@@ -1427,7 +1424,7 @@ describe('mcp', () => {
           first.bounds.x + first.bounds.width,
         );
 
-        const nodes = await persisted(target.id);
+        const nodes = await persisted(server, target.id);
 
         for (const insert of inserts) {
           const arrow = contentOf(nodes, insert.refs[arrowId]);
@@ -1457,7 +1454,7 @@ describe('mcp', () => {
         expect(coerced.status).toBe('applied');
         expect(coerced.layerCoerced).toBe(true);
 
-        const sourceNodes = await persisted(source.id);
+        const sourceNodes = await persisted(server, source.id);
 
         expect(
           Object.values(coerced.refs).map(
@@ -1546,7 +1543,7 @@ describe('mcp', () => {
           }),
         ).rejects.toThrow('Board not found');
 
-        expect(await persisted(foreign.id)).toEqual(foreignNodes);
+        expect(await persisted(server, foreign.id)).toEqual(foreignNodes);
         expect(
           await db.board.getBoardUser(foreign.id, owner.id),
         ).toBeUndefined();
@@ -1565,8 +1562,9 @@ describe('mcp', () => {
         const builtins = listed.filter((it) => it.scope.kind === 'builtin');
 
         // first in the list
-        expect(listed.slice(0, 4)).toEqual(builtins);
+        expect(listed.slice(0, 5)).toEqual(builtins);
         expect(builtins.map((it) => it.id)).toEqual([
+          'builtin:movie-retrospective',
           'builtin:stop-start-continue',
           'builtin:sailboat',
           'builtin:mad-sad-glad',
@@ -1578,7 +1576,7 @@ describe('mcp', () => {
           expect(it).not.toHaveProperty('preview');
         });
 
-        const starfish = builtins[3];
+        const starfish = builtins[4];
         const read = await callToolAs(server, owner, 'get_template', {
           templateId: 'builtin:starfish',
           includeData: true,
@@ -1611,7 +1609,7 @@ describe('mcp', () => {
           ),
         ).toEqual([]);
 
-        const nodes = await persisted(board.id);
+        const nodes = await persisted(server, board.id);
         const ids = new Set(nodes.map((it) => it.id));
 
         expect(

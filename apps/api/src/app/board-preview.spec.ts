@@ -728,6 +728,161 @@ describe('board preview', () => {
       expect([...assets.keys()].sort()).toEqual(urls);
     });
 
+    describe("the web app's template art", () => {
+      const art = 'assets/templates/movie-retrospective/cinema-v1.svg';
+
+      afterEach(() => vi.unstubAllEnvs());
+
+      it('is fetched from FRONTEND_URL, once, like cocomaterial art', async () => {
+        vi.stubEnv('FRONTEND_URL', 'https://tapiz.example.com/');
+        const fetchSpy = vi.fn<typeof fetch>(async () => svgResponse(STAR));
+
+        const first = await loadPreviewAssets([vector('v1', art)], {
+          fetch: fetchSpy,
+        });
+        const second = await loadPreviewAssets([vector('v2', art)], {
+          fetch: fetchSpy,
+        });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy.mock.calls[0][0]).toBe(
+          'https://tapiz.example.com/assets/templates/movie-retrospective/cinema-v1.svg',
+        );
+        expect(fetchSpy.mock.calls[0][1]).toMatchObject({
+          redirect: 'manual',
+        });
+        expect(first.skipped).toEqual([]);
+        expect(first.assets.get(art)).toMatch(/^data:image\/svg\+xml;base64,/);
+        expect(second.assets.get(art)).toBe(first.assets.get(art));
+      });
+
+      it('resolves against the origin of FRONTEND_URL', async () => {
+        vi.stubEnv('FRONTEND_URL', 'http://localhost:4300');
+        const fetchSpy = vi.fn<typeof fetch>(async () =>
+          svgResponse(new Uint8Array([1, 2, 3]), {
+            'content-type': 'image/webp',
+          }),
+        );
+        const url = 'assets/templates/movie-retrospective/thumbnail-v1.webp';
+
+        const { assets } = await loadPreviewAssets([vector('v1', url)], {
+          fetch: fetchSpy,
+        });
+
+        expect(fetchSpy.mock.calls[0][0]).toBe(
+          'http://localhost:4300/assets/templates/movie-retrospective/thumbnail-v1.webp',
+        );
+        expect(assets.get(url)).toMatch(/^data:image\/webp;base64,/);
+      });
+
+      it('is skipped without FRONTEND_URL', async () => {
+        vi.stubEnv('FRONTEND_URL', '');
+        const fetchSpy = vi.fn<typeof fetch>();
+
+        const { assets, skipped } = await loadPreviewAssets(
+          [vector('v1', art)],
+          { fetch: fetchSpy },
+        );
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(assets.size).toBe(0);
+        expect(skipped).toEqual([
+          { url: art, reason: 'app asset without FRONTEND_URL' },
+        ]);
+      });
+
+      it('never fetches look-alike paths', async () => {
+        vi.stubEnv('FRONTEND_URL', 'https://tapiz.example.com');
+        const fetchSpy = vi.fn<typeof fetch>();
+        const urls = [
+          'assets/templates/../../etc/passwd.svg',
+          'assets/templates//evil.example/a.svg',
+          '/assets/templates/a.svg',
+          '//evil.example/assets/templates/a.svg',
+          'assets/templates/a.svg?x=1',
+          'assets/templates/A.svg',
+          'assets/x.svg',
+        ];
+
+        const { assets, skipped } = await loadPreviewAssets(
+          urls.map((url, index) => vector(`v${index}`, url)),
+          { fetch: fetchSpy },
+        );
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(assets.size).toBe(0);
+        expect(skipped.map((it) => it.url).sort()).toEqual([...urls].sort());
+      });
+
+      it('rejects a response that ended up on another origin', async () => {
+        vi.stubEnv('FRONTEND_URL', 'https://tapiz.example.com');
+        const moved = (to: string) => {
+          const response = svgResponse(STAR);
+
+          Object.defineProperty(response, 'url', { value: to });
+
+          return response;
+        };
+        const fetchSpy = vi.fn<typeof fetch>(async (input) =>
+          String(input).includes('away')
+            ? moved('https://evil.example/a.svg')
+            : moved(String(input)),
+        );
+
+        const { assets, skipped } = await loadPreviewAssets(
+          [
+            vector('v1', 'assets/templates/away.svg'),
+            vector('v2', 'assets/templates/home.svg'),
+          ],
+          { fetch: fetchSpy },
+        );
+
+        expect(skipped).toEqual([
+          { url: 'assets/templates/away.svg', reason: 'redirect' },
+        ]);
+        expect([...assets.keys()]).toEqual(['assets/templates/home.svg']);
+      });
+
+      it('keeps the redirect, content type and size limits', async () => {
+        vi.stubEnv('FRONTEND_URL', 'https://tapiz.example.com');
+        const big = new Uint8Array(3 * 1024 * 1024);
+        const responses: Record<string, () => Response> = {
+          'assets/templates/redirect.svg': () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: 'http://127.0.0.1/' },
+            }),
+          'assets/templates/html.svg': () =>
+            new Response('<html></html>', {
+              headers: { 'content-type': 'text/html' },
+            }),
+          'assets/templates/big.png': () =>
+            svgResponse(big, { 'content-type': 'image/png' }),
+          'assets/templates/missing.svg': () =>
+            new Response('nope', { status: 404 }),
+        };
+        const fetchSpy = vi.fn<typeof fetch>(async (input) =>
+          responses[String(input).replace('https://tapiz.example.com/', '')](),
+        );
+
+        const { assets, skipped } = await loadPreviewAssets(
+          Object.keys(responses).map((url, index) => vector(`v${index}`, url)),
+          { fetch: fetchSpy },
+        );
+
+        expect(fetchSpy).toHaveBeenCalledTimes(4);
+        expect(assets.size).toBe(0);
+        expect(
+          Object.fromEntries(skipped.map((it) => [it.url, it.reason])),
+        ).toEqual({
+          'assets/templates/redirect.svg': 'redirect',
+          'assets/templates/html.svg': 'content-type text/html',
+          'assets/templates/big.png': 'too large',
+          'assets/templates/missing.svg': 'http 404',
+        });
+      });
+    });
+
     it('drops external references inside fetched svg', async () => {
       const url = 'https://cocomaterial.com/media/refs.svg';
       const svg =

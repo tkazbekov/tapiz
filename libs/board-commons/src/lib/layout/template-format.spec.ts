@@ -1,5 +1,7 @@
 import {
   boardTemplateDataSchema,
+  isAppTemplateAssetUrl,
+  isPortableAssetUrl,
   parseBoardTemplate,
   TEMPLATE_LIMITS,
   type BoardTemplateData,
@@ -192,6 +194,73 @@ describe('board template format', () => {
           template([asset(kind, 'data:image/svg+xml;base64,PHN2Zz4=')]),
         ).ok,
       ).toBe(false);
+    });
+  });
+
+  it("accepts the web app's own template art, and nothing like it", () => {
+    const accepted = [
+      'assets/templates/movie-retrospective/cinema-v1.svg',
+      'assets/templates/movie-retrospective/thumbnail-v1.webp',
+      'assets/templates/a_b-c/d.png',
+      'assets/templates/x.svg',
+    ];
+    const rejected = [
+      // traversal and empty segments
+      'assets/templates/../../../etc/passwd.svg',
+      'assets/templates/a/../b.svg',
+      'assets/templates/a/..svg',
+      'assets/templates//a.svg',
+      'assets/templates/a//b.svg',
+      'assets/templates/a/.svg',
+      'assets/templates/a/-.svg',
+      'assets/templates/a/_b.svg',
+      'assets/templates/0/_/-.png',
+      'assets/templates/-a/b.svg',
+      'assets/templates/a/.hidden.svg',
+      'assets/templates/a/',
+      // absolute or other folders
+      '/assets/templates/a.svg',
+      './assets/templates/a.svg',
+      'assets/x.svg',
+      'assets/templatesx/a.svg',
+      'https:assets/templates/a.svg',
+      '//evil.example/assets/templates/a.svg',
+      // query strings, fragments and odd characters
+      'assets/templates/a.svg?x=1',
+      'assets/templates/a.svg#f',
+      'assets/templates/A.svg',
+      'assets/templates/a.SVG',
+      'assets/templates/a b.svg',
+      'assets/templates/a%2e.svg',
+      'assets/templates/a\\b.svg',
+      'assets/templates/_a.svg',
+      'assets/templates/a.svg\n',
+      'assets/templates/a.jpg',
+      'assets/templates/a.svg.html',
+    ];
+
+    accepted.forEach((url) => {
+      expect(isAppTemplateAssetUrl(url), url).toBe(true);
+      expect(isPortableAssetUrl(url), url).toBe(true);
+    });
+    rejected.forEach((url) => {
+      expect(isAppTemplateAssetUrl(url), url).toBe(false);
+      expect(isPortableAssetUrl(url), url).toBe(false);
+    });
+
+    ['image', 'vector'].forEach((type) => {
+      const kind = type as 'image' | 'vector';
+
+      accepted.forEach((url) => {
+        expect(parseBoardTemplate(template([asset(kind, url)])).ok, url).toBe(
+          true,
+        );
+      });
+      rejected.forEach((url) => {
+        expect(parseBoardTemplate(template([asset(kind, url)])).ok, url).toBe(
+          false,
+        );
+      });
     });
   });
 

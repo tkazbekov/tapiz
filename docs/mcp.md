@@ -250,10 +250,10 @@ Built-in templates cannot be deleted.
 around Tapiz's real `300x300` note, and inserts them in one batch. Use it
 for custom retrospectives, kanban lanes, brainstorm grids and 2x2 matrices
 instead of hand-building panels with `apply_board_actions`. For a standard
-starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the
+movie, starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the
 [built-in template](#built-in-templates) instead; use `create_layout` for
 custom or themed variants, other formats, or when you need cells with note
-slots (`cells`, `freeSlots`). For themed retrospectives (a movie night, a
+slots (`cells`, `freeSlots`). For themed retrospectives (a space mission, a
 starfish around your own art), arrange the cells in a ring with
 `radial`, give them a [style](#cell-style) and add
 [decorations](#decorations), then check the result with
@@ -627,10 +627,12 @@ preview_board({
   a plain `❤`) stay text.
 - Only `https://cocomaterial.com` art is fetched, the same host rule as layout
   decorations (5 s timeout, 2 MB, no redirects, at most 60 new fetches per
-  render, an in-memory cache keyed without the query string). Every other
-  image, uploads included, is a labelled placeholder box, and is listed in
-  `skippedAssets` with a reason: `not a https cocomaterial.com url`,
-  `redirect`, `http <status>`, `content-type <mime>`, `too large`, `empty`,
+  render, an in-memory cache keyed without the query string). The web app's
+  own template art (`assets/templates/...`, the same paths templates accept)
+  is fetched with the same limits from `FRONTEND_URL`; without it, it is
+  skipped with `app asset without FRONTEND_URL`. Every other image, uploads
+  included, is a labelled placeholder box, and is listed in `skippedAssets`
+  with a reason: `not a https cocomaterial.com url`, `redirect`, `http <status>`, `content-type <mime>`, `too large`, `empty`,
   `timeout`, `fetch failed`, `too many assets` or `could not be rendered` (art
   the renderer failed on, drawn as a placeholder instead).
 - resvg runs in a short-lived child process, at most two at a time with a
@@ -672,10 +674,13 @@ the user can edit. The web app and MCP share the code in
 
 ### Built-in templates
 
-The four classic retros of the web template selector are available to every
-user, read-only, as `builtin:stop-start-continue`, `builtin:sailboat`,
-`builtin:mad-sad-glad` and `builtin:starfish`. Their data lives in
-`libs/board-commons/src/lib/layout/builtins/` and never touches the database.
+The five retros of the web template selector are available to every user,
+read-only, as `builtin:movie-retrospective`, `builtin:stop-start-continue`,
+`builtin:sailboat`, `builtin:mad-sad-glad` and `builtin:starfish`. Their data
+lives in `libs/board-commons/src/lib/layout/builtins/` and never touches the
+database. The movie retrospective's backdrop is web app art
+(`assets/templates/movie-retrospective/cinema-v1.svg`), which `preview_board`
+fetches from `FRONTEND_URL`.
 
 - `list_templates` lists them first, with `scope: { kind: 'builtin' }`,
   `canEdit: false` and `createdBy`, `createdAt` and `updatedAt` set to `null`.
@@ -727,7 +732,9 @@ save_board_as_template({
     are hidden on the board, or the note's text is private (its
     `textHidden`, or else its owner's hidden-text setting);
   - `board_scoped_asset`: images and vectors with `data:` or uploaded-file
-    URLs.
+    URLs. Only `http(s)` URLs and the web app's own template art are kept:
+    `assets/templates/<lowercase path>.svg|webp|png`, with no `..`, `//`,
+    query string or uppercase.
 - An arrow attached to a node outside the selection keeps where it renders
   but loses that attachment, and is listed in `detachedArrows`.
 - Votes, emojis, note owners and comments are not saved, and rich text is

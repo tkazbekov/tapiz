@@ -19,6 +19,11 @@ type Template = BuiltinTemplate & Preview;
 
 // previews stay in the web assets; the template data lives in board-commons
 const PREVIEWS: Record<string, Preview> = {
+  'movie-retrospective': {
+    image: 'assets/templates/movie-retrospective/thumbnail-v1.webp',
+    width: 360,
+    height: 280,
+  },
   'stop-start-continue': {
     image: 'assets/templates/stop-start-continue.webp',
     width: 300,

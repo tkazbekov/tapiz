@@ -25,6 +25,12 @@ const builtin = (
 
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   builtin(
+    'movie-retrospective',
+    'Movie Retrospective',
+    'Movie-themed sprint retro on one illustrated cinema backdrop (red curtains, a marquee title "The Sprint Premiere", film strips): a 3x2 grid of six ticket-shaped frameless panels, 01 Opening Scene (the sprint as a movie title), 02 Blockbusters (wins worth a standing ovation), 03 Plot Twists (surprises, blockers, cliffhangers), 04 Blooper Reel (what went off-script, no blame), 05 Cast & Crew (shout-outs) and 06 The Sequel (1-2 experiments with owner and date); each ticket has a prompt and two starter notes, and a footer holds the run of show (timings), the ground rules and a director\'s note',
+    () => import('./movie-retrospective.js'),
+  ),
+  builtin(
     'stop-start-continue',
     'Stop, Start, Continue',
     'Stop / start / continue retro: three tall side-by-side column panels (Stop, Start, Continue), then an arrow pointing to a fourth "Actions" column for next steps; notes go inside the columns',

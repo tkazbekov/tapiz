@@ -7,7 +7,7 @@ import {
   computed,
 } from '@angular/core';
 import { Store } from '@ngrx/store';
-import { Image, TuNode } from '@tapiz/board-commons';
+import { Image, TuNode, isAppTemplateAssetUrl } from '@tapiz/board-commons';
 import { HotkeysService } from '@tapiz/cdk/services/hostkeys.service';
 import { NodeSpaceComponent } from '../node-space';
 import { BoardActions } from '@tapiz/board-commons/actions/board.actions';
@@ -56,6 +56,11 @@ export class ImageComponent {
     }
 
     if (url.startsWith('data:')) {
+      return url;
+    }
+
+    // template art shipped with the web app, not a board upload
+    if (isAppTemplateAssetUrl(url)) {
       return url;
     }
 

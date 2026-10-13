@@ -34,8 +34,9 @@ describe('TemplateSelectorComponent', () => {
     TestBed.createComponent(TemplateSelectorComponent).componentInstance
       .elements;
 
-  it('has the four built-ins from board-commons, with previews', () => {
+  it('has the five built-ins from board-commons, with previews', () => {
     expect(builtIns().map((it) => it.name)).toEqual([
+      'Movie Retrospective',
       'Stop, Start, Continue',
       'Sailboat',
       'Mad, Sad, Glad',
@@ -45,7 +46,10 @@ describe('TemplateSelectorComponent', () => {
       BUILTIN_TEMPLATES.map((it) => it.id),
     );
     builtIns().forEach((it) => {
-      expect(it.image, it.name).toBe(`assets/templates/${it.slug}.webp`);
+      expect(it.image, it.name).toMatch(
+        new RegExp(`^assets/templates/${it.slug}[./]`),
+      );
+      expect(it.image, it.name).toMatch(/\.webp$/);
       expect(it.width, it.name).toBeGreaterThan(0);
       expect(it.height, it.name).toBeGreaterThan(0);
     });
