@@ -510,3 +510,90 @@ describe('validateAction background layer', () => {
     await expect(run(group, true)).resolves.toMatchObject({ op: 'add' });
   });
 });
+
+describe('validateAction group', () => {
+  const content = {
+    title: 'Ideas',
+    position: { x: 0, y: 0 },
+    width: 400,
+    height: 400,
+    layer: 0,
+    votes: [],
+  };
+  const nodes: TuNode[] = [
+    { id: 'group-1', type: 'group', content },
+    { id: 'text-1', type: 'text', content: { text: '<p>hi</p>' } },
+  ];
+
+  const run = (action: StateActions) =>
+    validateAction(action, nodes, 'user-1', false, 'board-1', 'private-1');
+
+  it('accepts adds, patches and removes as before', async () => {
+    await expect(
+      run({
+        op: 'add',
+        data: {
+          id: 'group-2',
+          type: 'group',
+          content,
+          children: [],
+        } as TuNode,
+        position: 1,
+      }),
+    ).resolves.toEqual({
+      op: 'add',
+      data: { id: 'group-2', type: 'group', content },
+      position: 1,
+    });
+
+    await expect(
+      run({
+        op: 'patch',
+        data: { id: 'group-1', type: 'group', content: { title: 'Renamed' } },
+      }),
+    ).resolves.toEqual({
+      op: 'patch',
+      data: { id: 'group-1', type: 'group', content: { title: 'Renamed' } },
+    });
+
+    await expect(
+      run({ op: 'remove', data: { id: 'group-1', type: 'group' } }),
+    ).resolves.toEqual({
+      op: 'remove',
+      data: { id: 'group-1', type: 'group' },
+    });
+  });
+
+  it('rejects an add without a position or size', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+
+    await expect(
+      run({
+        op: 'add',
+        data: { id: 'group-2', type: 'group', content: { title: 'x' } },
+      }),
+    ).resolves.toBe(false);
+
+    consoleError.mockRestore();
+  });
+
+  it('rejects a patch to a missing node', async () => {
+    await expect(
+      run({
+        op: 'patch',
+        data: { id: 'missing', type: 'group', content: { title: 'x' } },
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('rejects a patch that claims another type', async () => {
+    await expect(
+      run({
+        op: 'patch',
+        data: { id: 'text-1', type: 'group', content: { title: 'x' } },
+      }),
+    ).resolves.toBe(false);
+  });
+});

@@ -9,6 +9,7 @@ import { SETTINGS_VALIDATOR } from '@tapiz/board-commons/validators/settings.val
 import { TIMER_VALIDATORS } from '@tapiz/board-commons/validators/timer.validators.js';
 
 import { NOTE_VALIDATORS } from '@tapiz/board-commons/validators/note.validator.js';
+import { GROUP_VALIDATORS } from '@tapiz/board-commons/validators/group.validator.js';
 import { sanitizeStateActions } from './rich-text.js';
 
 const validations = {
@@ -17,7 +18,6 @@ const validations = {
   },
   new: {
     panel: Validators.newPanel,
-    group: Validators.newGroup,
     image: Validators.newImage,
     vector: Validators.newVector,
     text: Validators.newText,
@@ -25,7 +25,6 @@ const validations = {
   },
   patch: {
     panel: Validators.patchPanel,
-    group: Validators.patchGroup,
     image: Validators.patchImage,
     vector: Validators.patchVector,
     text: Validators.patchText,
@@ -44,6 +43,7 @@ const validations = {
     ...POLL_VALIDATORS,
     ...COMMENTS_VALIDATORS,
     ...NOTE_VALIDATORS,
+    ...GROUP_VALIDATORS,
     ...TIMER_VALIDATORS,
   ],
 };
