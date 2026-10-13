@@ -29,4 +29,8 @@ export const BoardActions = {
     BoardCommonActions.stateAction,
     props<{ data: StateActions[] }>(),
   ),
+  voteCorrection: createAction(
+    BoardCommonActions.voteCorrection,
+    props<{ data: StateActions[] }>(),
+  ),
 };

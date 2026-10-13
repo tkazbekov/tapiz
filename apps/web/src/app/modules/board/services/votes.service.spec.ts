@@ -1,9 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { Store } from '@ngrx/store';
-import { describe, beforeEach, it, expect, vi } from 'vitest';
+import { afterEach, describe, beforeEach, it, expect, vi } from 'vitest';
 import { isNoteMaskedFor } from '@tapiz/board-commons';
-import type { TuNode, UserVote } from '@tapiz/board-commons';
+import type { StateActions, TuNode, UserVote } from '@tapiz/board-commons';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { NotificationService } from '../../../shared/notification/notification.service';
 import { VotesService } from './votes.service';
@@ -12,6 +12,7 @@ describe('VotesService', () => {
   let service: VotesService;
   let dispatch: ReturnType<typeof vi.fn>;
   let notify: ReturnType<typeof vi.fn>;
+  let applyActions: ReturnType<typeof vi.fn>;
   const nodes = signal<TuNode[]>([]);
 
   const note = (
@@ -33,6 +34,7 @@ describe('VotesService', () => {
   beforeEach(() => {
     dispatch = vi.fn();
     notify = vi.fn();
+    applyActions = vi.fn();
     nodes.set([]);
 
     TestBed.configureTestingModule({
@@ -46,6 +48,7 @@ describe('VotesService', () => {
             userId: signal('me'),
             settings: () => nodes().find((it) => it.type === 'settings'),
             isMasked: (node: TuNode) => isNoteMaskedFor(node, nodes(), 'me'),
+            applyActions,
           },
         },
         { provide: NotificationService, useValue: { open: notify } },
@@ -132,5 +135,61 @@ describe('VotesService', () => {
 
     expect(service.budget()).toBeNull();
     expect(service.votesLeft()).toBeNull();
+  });
+
+  describe('incoming votes', () => {
+    const patch = (votes: UserVote[]): StateActions => ({
+      op: 'patch',
+      data: { type: 'note', id: 'n1', content: { votes } },
+    });
+    const incomingVotes = (actions: StateActions[]) =>
+      (actions[0].data as TuNode<{ votes: UserVote[] }>).content.votes;
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('keeps the own entry while the own vote is in flight', () => {
+      nodes.set([note('n1', [{ userId: 'me', vote: 3 }])]);
+      service.markSent([patch([{ userId: 'me', vote: 3 }])]);
+
+      // another user's vote, queued before ours was applied
+      const merged = service.mergeIncoming([
+        patch([
+          { userId: 'me', vote: 2 },
+          { userId: 'other', vote: 1 },
+        ]),
+      ]);
+
+      expect(incomingVotes(merged)).toEqual([
+        { userId: 'other', vote: 1 },
+        { userId: 'me', vote: 3 },
+      ]);
+    });
+
+    it('takes the incoming own entry once nothing is in flight', () => {
+      vi.useFakeTimers();
+      nodes.set([note('n1', [{ userId: 'me', vote: 3 }])]);
+      service.markSent([patch([{ userId: 'me', vote: 3 }])]);
+      vi.advanceTimersByTime(5000);
+
+      // e.g. a vote from another tab
+      const incoming = [patch([{ userId: 'me', vote: 4 }])];
+
+      expect(service.mergeIncoming(incoming)).toEqual(incoming);
+    });
+
+    it('applies corrections and stops keeping the own entry', () => {
+      nodes.set([note('n1', [{ userId: 'me', vote: 3 }])]);
+      service.markSent([patch([{ userId: 'me', vote: 3 }])]);
+
+      const correction = [patch([{ userId: 'me', vote: 2 }])];
+      service.applyCorrections(correction);
+
+      expect(applyActions).toHaveBeenCalledWith(correction);
+
+      const incoming = [patch([{ userId: 'me', vote: 2 }])];
+      expect(service.mergeIncoming(incoming)).toEqual(incoming);
+    });
   });
 });

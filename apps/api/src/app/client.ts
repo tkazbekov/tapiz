@@ -233,7 +233,10 @@ export class Client {
     }
 
     if (corrections.length) {
-      this.sendToClient(this.getStateAction(corrections));
+      this.sendToClient({
+        type: BoardCommonActions.voteCorrection,
+        data: corrections,
+      });
     }
   }
 

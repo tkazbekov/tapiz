@@ -41,6 +41,7 @@ import { selectQueryParam } from '../../../router.selectors';
 import { filterNil } from 'ngxtension/filter-nil';
 import { filterHiddenNoteActions } from '../services/hidden-notes-actions';
 import { NotificationService } from '../../../shared/notification/notification.service';
+import { VotesService } from '../services/votes.service';
 
 @Injectable()
 export class BoardEffects {
@@ -55,6 +56,7 @@ export class BoardEffects {
   private liveReactionStore = inject(LiveReactionStore);
   private pingStore = inject(PingStore);
   private notificationService = inject(NotificationService);
+  private votesService = inject(VotesService);
   public initBoard$ = createEffect(
     () => {
       return this.actions$.pipe(
@@ -81,6 +83,7 @@ export class BoardEffects {
           }
 
           this.boardFacade.applyActions(actions, batch.history);
+          this.votesService.markSent(actions);
           this.wsService.send(actions);
         }),
       );
@@ -155,13 +158,29 @@ export class BoardEffects {
           (item) => item.op === 'add' && item.data.type === 'user',
         );
 
-        this.boardFacade.applyActions(aggregatedData);
+        this.boardFacade.applyActions(
+          this.votesService.mergeIncoming(aggregatedData),
+        );
 
         return hasNewUser ? BoardPageActions.newUserJoined() : null;
       }),
       filterNil(),
     );
   });
+
+  public voteCorrection$ = createEffect(
+    () => {
+      return this.actions$.pipe(
+        ofType(BoardActions.voteCorrection),
+        tap(({ data }) => {
+          this.votesService.applyCorrections(data);
+        }),
+      );
+    },
+    {
+      dispatch: false,
+    },
+  );
 
   public updateBoardName$ = createEffect(
     () => {

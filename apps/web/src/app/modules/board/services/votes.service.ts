@@ -3,6 +3,7 @@ import { Store } from '@ngrx/store';
 import {
   countUserVotes,
   ownVotes,
+  StateActions,
   TuNode,
   UserVote,
   votesBudget,
@@ -11,11 +12,33 @@ import { BoardActions } from '@tapiz/board-commons/actions/board.actions';
 import { BoardFacade } from '../../../services/board-facade.service';
 import { NotificationService } from '../../../shared/notification/notification.service';
 
+// how long our own vote on a node counts as in flight
+const PENDING_VOTE_MS = 2000;
+
+type VotesAction = StateActions & {
+  data: { id: string; type: string; content: { votes: UserVote[] } };
+};
+
+function isVotesAction(action: StateActions): action is VotesAction {
+  if (action.op === 'remove' || action.parent) {
+    return false;
+  }
+
+  const content = action.data.content as { votes?: unknown } | undefined;
+
+  return (
+    (action.data.type === 'note' || action.data.type === 'group') &&
+    Array.isArray(content?.votes)
+  );
+}
+
 @Injectable({ providedIn: 'root' })
 export class VotesService {
   #store = inject(Store);
   #boardFacade = inject(BoardFacade);
   #notificationService = inject(NotificationService);
+  // node id -> when we last sent our own votes on it
+  #pending = new Map<string, number>();
 
   // null is unlimited
   budget = computed(() => votesBudget(this.#boardFacade.settings()?.content));
@@ -87,5 +110,70 @@ export class VotesService {
         ],
       }),
     );
+  }
+
+  markSent(actions: StateActions[]) {
+    const now = Date.now();
+
+    actions.filter(isVotesAction).forEach((action) => {
+      this.#pending.set(action.data.id, now);
+    });
+  }
+
+  // Another user's vote is broadcast with the votes stored when it was
+  // queued, so it can carry an older value of our own entry than the vote we
+  // just sent. Keep our local entry while our own vote is in flight; after
+  // that the incoming entry wins (e.g. a vote from another tab).
+  mergeIncoming(actions: StateActions[]): StateActions[] {
+    const userId = this.#boardFacade.userId();
+    const now = Date.now();
+
+    return actions.map((action) => {
+      if (!isVotesAction(action)) {
+        return action;
+      }
+
+      const sentAt = this.#pending.get(action.data.id);
+
+      if (sentAt === undefined || now - sentAt > PENDING_VOTE_MS) {
+        this.#pending.delete(action.data.id);
+        return action;
+      }
+
+      const node = this.#boardFacade
+        .nodes()
+        .find((it) => it.id === action.data.id);
+      const localVotes = (node?.content as { votes?: UserVote[] } | undefined)
+        ?.votes;
+
+      if (!localVotes) {
+        return action;
+      }
+
+      const own = ownVotes(localVotes, userId);
+      const others = action.data.content.votes.filter(
+        (it) => it.userId !== userId,
+      );
+
+      return {
+        ...action,
+        data: {
+          ...action.data,
+          content: {
+            ...action.data.content,
+            votes: own ? [...others, { userId, vote: own }] : others,
+          },
+        },
+      } as StateActions;
+    });
+  }
+
+  // the server's stored votes for our own actions are authoritative
+  applyCorrections(actions: StateActions[]) {
+    actions.filter(isVotesAction).forEach((action) => {
+      this.#pending.delete(action.data.id);
+    });
+
+    this.#boardFacade.applyActions(actions);
   }
 }

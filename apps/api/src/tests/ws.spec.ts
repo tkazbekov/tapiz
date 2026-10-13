@@ -648,7 +648,7 @@ describe('ws', () => {
       });
       expect(JSON.parse(frames[0])).toEqual([
         {
-          type: '[Board] State action',
+          type: '[Board] Vote correction',
           data: voteOn(noteId, [{ userId: otherId, vote: 2 }]),
         },
       ]);
