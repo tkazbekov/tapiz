@@ -983,6 +983,29 @@ describe('ws', () => {
       );
     });
 
+    it('copies the live board with hidden notes blank', async () => {
+      const { board, other, noteId, close } = await hiddenBoard(43, 44);
+      const ownNote = randomUUID();
+
+      await addNote(other, ownNote, getAuth(44).sub, 'secret-copier');
+
+      // the stored board lags behind the live one
+      const stored = (await db.board.getBoard(board.id))?.board;
+
+      expect(nodeIn(stored, ownNote)).toBeUndefined();
+
+      const copy = await getUserCaller(44).board.duplicate({
+        boardId: board.id,
+      });
+      const nodes = (await db.board.getBoard(copy.id))?.board ?? [];
+
+      expect(nodeIn(nodes, ownNote)?.content['text']).toEqual('secret-copier');
+      expect(nodeIn(nodes, noteId)?.content['text']).toEqual('');
+      expect(JSON.stringify(nodes)).not.toContain('secret-a');
+
+      close();
+    });
+
     it('keeps the comments of a hidden note from others', async () => {
       const { board, admin, adminTab, other, noteId, close } =
         await hiddenBoard(39, 40);

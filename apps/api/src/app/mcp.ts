@@ -9,6 +9,7 @@ import {
   type CocomaterialApiListVectors,
   type CocomaterialApiVector,
   type CocomaterialTag,
+  maskNodesForViewer,
   type StateActions,
   type TuNode,
   withDefaultUserSettings,
@@ -101,6 +102,7 @@ export const TAPIZ_MCP_INSTRUCTIONS = [
   'Use board coordinates in content.position, not browser screen coordinates. Do not use content.layer as z-index: Tapiz uses layer 0 for participant board content such as notes/text and layer 1 for edit/template content such as panels. Do not invent arbitrary layers such as layer 2; validation only accepts layers 0 and 1, and board-mode tools like area selection are designed around those supported layer roles. Layer 1 is the board edit mode and only board admins (including team admins) can add, change or remove layer-1 nodes; for any other user these actions are rejected, along with the rest of their batch, so use layer 0 when the API token user is not a board admin.',
   'Visual depth/z-index comes from node order in the board array: later sibling nodes render above earlier sibling nodes. To put an element in front of or behind another element, move it in the array with apply_board_actions position/order rather than changing content.layer.',
   'Use apply_board_actions for multi-node edits so related changes are validated and persisted as one realtime batch.',
+  "When the board settings have notesHidden set to true, notes of other users are returned as blank cards with empty text, drawing and emojis and no comments, admins included; you can only add notes owned by the API token user, and other users' notes can only be moved or resized (no text, votes, color, comments or removal) until a board admin reveals them.",
   'Choose node types deliberately: notes are editable/votable sticky content; panels are visual lanes/backgrounds; groups are movable/votable clusters; text is standalone labels/instructions; arrows connect nodes; vectors/images are visual assets; polls, estimation, timers, comments, settings, and users are specialized workflow/runtime nodes.',
   'For post-it workflows such as retrospectives, design lanes around the real default note size of 300x300. Make lanes wide/tall enough for multiple 300x300 notes, leave real empty space in each lane, reserve a header band inside panels, and do not place notes over panel labels or instructions.',
   'Do not set panel content.color for lanes that contain notes unless you intentionally want to recolor every note inside that panel. Tapiz notes inside a panel use the panel color instead of their own note color.',
@@ -292,9 +294,30 @@ export async function applyBoardActionsAsMcpUser(
 
     return {
       appliedActions,
-      board: server.getBoard(boardId) ?? [],
+      board: maskNodesForViewer(server.getBoard(boardId) ?? [], user.id),
     };
   });
+}
+
+// the board as the user may see it: hidden notes of others are blank
+export async function readBoardAsMcpUser(
+  server: Server,
+  user: McpUser,
+  boardId: string,
+) {
+  const haveAccess = await db.board.haveAccess(boardId, user.id);
+
+  if (!haveAccess) {
+    throw new Error('Unable to read board with this API token');
+  }
+
+  const nodes =
+    server.getBoard(boardId) ?? (await db.board.getBoard(boardId))?.board ?? [];
+
+  return {
+    boardId,
+    nodes: maskNodesForViewer(nodes, user.id),
+  };
 }
 
 function createTapizMcpServer(boardServer: Server, user: McpUser) {
@@ -324,29 +347,9 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    hideQueryDetails(async ({ boardId }) => {
-      const haveAccess = await db.board.haveAccess(boardId, user.id);
-
-      if (!haveAccess) {
-        throw new Error('Unable to read board with this API token');
-      }
-
-      const loadedBoard = boardServer.getBoard(boardId);
-
-      if (loadedBoard) {
-        return textResult({
-          boardId,
-          nodes: loadedBoard,
-        });
-      }
-
-      const persistedBoard = await db.board.getBoard(boardId);
-
-      return textResult({
-        boardId,
-        nodes: persistedBoard?.board ?? [],
-      });
-    }),
+    hideQueryDetails(async ({ boardId }) =>
+      textResult(await readBoardAsMcpUser(boardServer, user, boardId)),
+    ),
   );
 
   server.registerTool(

@@ -97,6 +97,41 @@ describe('board', () => {
     expect(boards.length).toEqual(initialBoards.length + 1);
   });
 
+  it('duplicates hidden notes of other users as blank cards', async () => {
+    const caller = await getUserCaller(1);
+    const board = await caller.board.create({ name: 'hidden copy', teamId });
+    const note = (id: string, ownerId: string, text: string) => ({
+      id,
+      type: 'note',
+      content: {
+        text,
+        position: { x: 0, y: 0 },
+        layer: 0,
+        ownerId,
+        votes: [],
+        emojis: [],
+        drawing: [],
+        width: 240,
+        height: 160,
+      },
+    });
+
+    await db.board.updateBoard(board.id, [
+      { id: 'settings', type: 'settings', content: { notesHidden: true } },
+      note('theirs', getAuth(70).sub, 'secret of another user'),
+      note('mine', getAuth(1).sub, 'my own text'),
+    ]);
+
+    const copy = await caller.board.duplicate({ boardId: board.id });
+    const nodes = (await db.board.getBoard(copy.id))?.board ?? [];
+    const textOf = (id: string) =>
+      (nodes.find((it) => it.id === id)?.content as { text?: string })?.text;
+
+    expect(textOf('theirs')).toEqual('');
+    expect(textOf('mine')).toEqual('my own text');
+    expect(JSON.stringify(nodes)).not.toContain('secret of another user');
+  });
+
   it('can view board', async () => {
     const callerUser1 = getUserCaller(1);
     const callerUser2 = getUserCaller(70);

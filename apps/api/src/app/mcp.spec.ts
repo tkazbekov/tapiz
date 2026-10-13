@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { Server as WsServer } from 'socket.io';
 import { vi } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm';
+import type { TuNode } from '@tapiz/board-commons';
 import { startDB } from './db/init-db.js';
 import db from './db/index.js';
 import {
   applyBoardActionsAsMcpUser,
   createCocomaterialNodeAction,
   hideQueryDetails,
+  readBoardAsMcpUser,
   TAPIZ_MCP_INSTRUCTIONS,
 } from './mcp.js';
 import { Server } from './server.js';
@@ -132,6 +134,66 @@ describe('mcp', () => {
         }),
       ]),
     );
+  });
+
+  it('returns hidden notes of other users as blank cards', async () => {
+    const server = new Server({
+      to: () => ({
+        emit: vi.fn(),
+      }),
+      of: () => ({
+        adapter: {
+          rooms: new Map(),
+        },
+      }),
+    } as unknown as WsServer);
+    const user = getAuth(1);
+    const mcpUser = { id: user.sub, name: user.name, email: user.email };
+    const board = await getUserCaller(1).board.create({
+      name: 'mcp hidden notes',
+    });
+    const note = (id: string, ownerId: string, text: string): TuNode => ({
+      id,
+      type: 'note',
+      content: {
+        text,
+        position: { x: 0, y: 0 },
+        layer: 0,
+        ownerId,
+        votes: [],
+        emojis: [],
+        drawing: [],
+        width: 240,
+        height: 160,
+        color: '#fee2e2',
+      },
+    });
+    const otherNote = randomUUID();
+    const ownNote = randomUUID();
+
+    await db.board.updateBoard(board.id, [
+      { id: randomUUID(), type: 'settings', content: { notesHidden: true } },
+      note(otherNote, getAuth(2).sub, 'secret of another user'),
+      note(ownNote, user.sub, 'my own text'),
+    ]);
+
+    const textOf = (nodes: TuNode[], id: string) =>
+      (nodes.find((it) => it.id === id)?.content as { text?: string })?.text;
+
+    const read = await readBoardAsMcpUser(server, mcpUser, board.id);
+
+    expect(textOf(read.nodes, otherNote)).toEqual('');
+    expect(textOf(read.nodes, ownNote)).toEqual('my own text');
+
+    const added = randomUUID();
+    const result = await applyBoardActionsAsMcpUser(server, mcpUser, board.id, [
+      { op: 'add', data: note(added, user.sub, 'added by mcp') },
+    ]);
+
+    expect(result.appliedActions).toHaveLength(1);
+    expect(textOf(result.board, otherNote)).toEqual('');
+    expect(textOf(result.board, added)).toEqual('added by mcp');
+    expect(JSON.stringify(result)).not.toContain('secret of another user');
   });
 
   it('creates a Tapiz vector action from a Cocomaterial asset', () => {

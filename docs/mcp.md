@@ -62,7 +62,9 @@ must already have access to the requested board.
 
 `get_board`
 
-Reads current board nodes for a board the token can access.
+Reads current board nodes for a board the token can access. While the board
+hides notes (`notesHidden` in its settings), other users' notes come back as
+blank cards.
 
 `add_node`
 
@@ -185,6 +187,11 @@ validation.
   can add, change, or remove layer `1` nodes. For any other user these actions
   are rejected along with the rest of their batch, so use layer `0` when the
   API token's user is not a board admin.
+- While the board settings have `notesHidden: true`, other users' notes are
+  returned as blank cards (empty text, drawing and emojis, no comments), admins
+  included. New notes must be owned by the API token's user, and other users'
+  notes can only be moved or resized until a board admin reveals them; any
+  other change is rejected along with the rest of its batch.
 - Visual depth/z-index comes from node order in the board array. Later sibling
   nodes render above earlier sibling nodes. To put an element in front of or
   behind another element, move it in the array with `apply_board_actions`

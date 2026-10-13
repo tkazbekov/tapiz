@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { BoardUser } from '@tapiz/board-commons';
+import { BoardUser, maskNodesForViewer } from '@tapiz/board-commons';
 import {
   boardAccountMemberProcedure,
   boardAdminProcedure,
@@ -10,7 +10,7 @@ import {
   teamMemberProcedure,
 } from '../trpc.js';
 import db from '../db/index.js';
-import { checkBoardAccess, revokeBoardAccess } from '../global.js';
+import { checkBoardAccess, getServer, revokeBoardAccess } from '../global.js';
 import { sendEvent, sendUserEvent } from '../subscriptor.js';
 import { sendMentionNotificationEmail } from '../mailer.js';
 import { rateLimitedMiddleware } from '../rate-limited.js';
@@ -121,10 +121,17 @@ export const boardRouter = router({
         ? req.ctx.board.teamId
         : null;
 
+    // the live board is newer than the stored one, and the copy only gets
+    // what the copier can see of hidden notes
+    const board = maskNodesForViewer(
+      getServer()?.getBoard(req.input.boardId) ?? req.ctx.board.board,
+      req.ctx.user.sub,
+    );
+
     const newBoard = await db.board.createBoard(
       req.ctx.board.name + ' (copy)',
       req.ctx.user.sub,
-      req.ctx.board.board,
+      board,
       teamId,
     );
 
