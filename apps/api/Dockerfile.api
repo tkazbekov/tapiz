@@ -22,7 +22,6 @@ RUN corepack enable
 
 WORKDIR /home/tapiz
 
-COPY ./drizzle.config.ts /home/tapiz/
 COPY ./drizzle /home/tapiz/drizzle
 COPY --from=prod-deps /home/tapiz/node_modules /home/tapiz/node_modules
 COPY --from=build /home/tapiz/dist/apps/api /home/tapiz/dist/apps/api

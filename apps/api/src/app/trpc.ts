@@ -3,8 +3,22 @@ import type { AppContext } from './app.context.js';
 import type { Principal } from './auth/principal.js';
 import db from './db/index.js';
 import { z } from 'zod';
+import { DrizzleQueryError } from 'drizzle-orm';
 
-const t = initTRPC.context<AppContext>().create();
+const t = initTRPC.context<AppContext>().create({
+  // drizzle's error message includes the SQL and its params (hashes, board
+  // state); clients get the driver's message instead.
+  errorFormatter({ shape, error }) {
+    if (error.cause instanceof DrizzleQueryError) {
+      return {
+        ...shape,
+        message: error.cause.cause?.message ?? 'Internal server error',
+      };
+    }
+
+    return shape;
+  },
+});
 
 export const router = t.router;
 export const publicProcedure = t.procedure;

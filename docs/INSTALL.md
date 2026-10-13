@@ -40,9 +40,7 @@ A board admin can turn on "anyone with the link" sharing for a board. Visitors w
 
 ## Upgrading from Google Login
 
-Earlier versions signed in with Google. The `0011_own_auth` migration runs automatically when the API starts: it removes Google sign-in, ends all existing sessions, and leaves every existing account without a password and with an unverified email. Boards, teams and other data are kept.
-
-Existing users sign in again through "Forgot password?" on the login page, using the same email address as their Google account. Completing the reset also verifies the email, so email-matched team invitations work again for that account. This needs SMTP, or `AUTH_LOG_RESET_LINKS=true` set temporarily so the links appear in the API log (`docker compose logs api`); the Docker Compose API runs with `NODE_ENV=production`, so links are not logged otherwise. The `GOOGLE_CLIENT_*` variables are no longer used and can be removed from `.env`.
+Earlier versions signed in with Google. This version also resets the database migration history to a single baseline (`drizzle/0000_baseline.sql`), so it can't upgrade a database created by an earlier version in place: the baseline migration fails against it and the API keeps retrying it, logging "Error connecting to DB". Start from an empty database (for Docker Compose, remove the Postgres volume), and the schema is created when the API starts. The `GOOGLE_CLIENT_*` variables are no longer used and can be removed from `.env`.
 
 ## Email (SMTP)
 

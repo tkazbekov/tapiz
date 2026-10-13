@@ -1,89 +1,12 @@
 {
-  "version": "5",
-  "dialect": "pg",
+  "version": "7",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1716474198034,
-      "tag": "0000_lucky_excalibur",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1718289258866,
-      "tag": "0001_last_peter_parker",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1721295736271,
-      "tag": "0002_nosy_stardust",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1722271647656,
-      "tag": "0003_volatile_lethal_legion",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "5",
-      "when": 1730829889060,
-      "tag": "0004_public_thor",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "5",
-      "when": 1731427873183,
-      "tag": "0005_talented_young_avengers",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "5",
-      "when": 1731509652063,
-      "tag": "0006_sudden_james_howlett",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "5",
-      "when": 1731514196823,
-      "tag": "0007_fixed_korath",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "5",
-      "when": 1782121596868,
-      "tag": "0008_first_naoko",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "5",
-      "when": 1782382334981,
-      "tag": "0009_lonely_the_twelve",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "5",
-      "when": 1783709158294,
-      "tag": "0010_bored_killmonger",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "5",
-      "when": 1791936000000,
-      "tag": "0011_own_auth",
+      "version": "7",
+      "when": 1791936000001,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

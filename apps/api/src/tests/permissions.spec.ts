@@ -374,7 +374,10 @@ describe('permissions', () => {
           .where(eq(accounts.id, getGuestAuth(2).sub));
       };
 
-      await expect(update()).rejects.toThrow(/accounts_identity_chk/);
+      // drizzle wraps the PostgresError
+      await expect(update()).rejects.toMatchObject({
+        cause: { constraint_name: 'accounts_identity_chk' },
+      });
     });
 
     it('loses access when link sharing is turned off', async () => {

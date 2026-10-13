@@ -9,51 +9,76 @@ import {
   unique,
   pgEnum,
   index,
+  check,
+  customType,
 } from 'drizzle-orm/pg-core';
-import { relations, sql } from 'drizzle-orm';
-import { TuNode, UserSettings } from '@tapiz/board-commons';
+import { sql } from 'drizzle-orm';
+import type { TuNode, UserSettings } from '@tapiz/board-commons';
 
-export const roleEnum = pgEnum('role', ['admin', 'member']);
-export const roleEnumWithGuest = pgEnum('role', ['admin', 'member', 'guest']);
+// One Postgres type for every role column. Team members can't be guests;
+// team_members_role_chk enforces that in the database.
+export const roleEnum = pgEnum('role', ['admin', 'member', 'guest']);
 
-// accounts_identity_chk lives in drizzle/0011; re-declare with check() after
-// the drizzle upgrade. Guests have no email, password or token.
-export const accounts = pgTable('accounts', {
-  id: varchar('id', { length: 256 }).primaryKey(),
-  name: varchar('name', { length: 256 }).notNull(),
-  // always stored trimmed and lower-cased; null for guests
-  email: varchar('email', { length: 320 }).unique(),
-  picture: varchar('picture'),
-  // scrypt$<log2N>$<r>$<p>$<salt>$<key>
-  passwordHash: varchar('password_hash', { length: 255 }),
-  isGuest: boolean('is_guest').notNull().default(false),
-  emailVerifiedAt: timestamp('email_verified_at', {
-    withTimezone: true,
-    mode: 'date',
-  }),
-  // sha256 hex of the emailed tokens
-  emailVerifyHash: varchar('email_verify_hash', { length: 64 }).unique(),
-  emailVerifyExpiresAt: timestamp('email_verify_expires_at', {
-    withTimezone: true,
-    mode: 'date',
-  }),
-  passwordResetHash: varchar('password_reset_hash', { length: 64 }).unique(),
-  passwordResetExpiresAt: timestamp('password_reset_expires_at', {
-    withTimezone: true,
-    mode: 'date',
-  }),
-  apiTokenHash: varchar('api_token_hash', { length: 64 }).unique(),
-  apiTokenCreatedAt: timestamp('api_token_created_at', { mode: 'string' }),
-  settings: json('settings')
-    .$type<UserSettings>()
-    .notNull()
-    .default(
-      sql`'{"wheelInputMode":"auto","noteDefaults":{"backgroundColor":"#fbb980","textColor":"#000000","fontFamily":"\\"Inter\\", -apple-system, system-ui, sans-serif","bold":false,"italic":false}}'::json`,
-    ),
-  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-    .notNull()
-    .defaultNow(),
+export type TeamRole = 'admin' | 'member';
+
+// `timestamp` (without time zone, holding UTC) read back as an ISO-8601
+// string like '2024-01-02T03:04:05.678Z'. drizzle's own mode: 'string'
+// returns Postgres' text form ('2024-01-02 03:04:05.678'), which browsers
+// parse as local time; the API has always sent ISO strings.
+const isoTimestamp = customType<{ data: string; driverData: string }>({
+  dataType: () => 'timestamp',
+  fromDriver: (value) => new Date(`${value.replace(' ', 'T')}Z`).toISOString(),
 });
+
+export const accounts = pgTable(
+  'accounts',
+  {
+    id: varchar('id', { length: 256 }).primaryKey(),
+    name: varchar('name', { length: 256 }).notNull(),
+    // always stored trimmed and lower-cased; null for guests
+    email: varchar('email', { length: 320 }).unique(),
+    picture: varchar('picture'),
+    // scrypt$<log2N>$<r>$<p>$<salt>$<key>
+    passwordHash: varchar('password_hash', { length: 255 }),
+    isGuest: boolean('is_guest').notNull().default(false),
+    emailVerifiedAt: timestamp('email_verified_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    // sha256 hex of the emailed tokens
+    emailVerifyHash: varchar('email_verify_hash', { length: 64 }).unique(),
+    emailVerifyExpiresAt: timestamp('email_verify_expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    passwordResetHash: varchar('password_reset_hash', { length: 64 }).unique(),
+    passwordResetExpiresAt: timestamp('password_reset_expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    apiTokenHash: varchar('api_token_hash', { length: 64 }).unique(),
+    apiTokenCreatedAt: isoTimestamp('api_token_created_at'),
+    settings: json('settings')
+      .$type<UserSettings>()
+      .notNull()
+      .default(
+        sql`'{"wheelInputMode":"auto","noteDefaults":{"backgroundColor":"#fbb980","textColor":"#000000","fontFamily":"\\"Inter\\", -apple-system, system-ui, sans-serif","bold":false,"italic":false}}'::json`,
+      ),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Guests have no email, password or tokens; everyone else has an email.
+    check(
+      'accounts_identity_chk',
+      sql`(NOT ${t.isGuest} AND ${t.email} IS NOT NULL)
+        OR (${t.isGuest} AND ${t.email} IS NULL AND ${t.passwordHash} IS NULL
+            AND ${t.apiTokenHash} IS NULL AND ${t.passwordResetHash} IS NULL
+            AND ${t.emailVerifyHash} IS NULL AND ${t.emailVerifiedAt} IS NULL)`,
+    ),
+  ],
+);
 
 export const sessions = pgTable(
   'sessions',
@@ -71,20 +96,16 @@ export const sessions = pgTable(
       mode: 'date',
     }).notNull(),
   },
-  (t) => ({
-    accountIdx: index('sessions_account_id_idx').on(t.accountId),
-  }),
+  (t) => [index('sessions_account_id_idx').on(t.accountId)],
 );
-
-export const usersRelations = relations(accounts, ({ many }) => ({
-  accountsToBoards: many(acountsToBoards),
-}));
 
 export const boards = pgTable('boards', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: varchar('name', { length: 256 }).notNull(),
   board: json('board').$type<TuNode[]>().notNull(),
-  createdAt: timestamp('created_at', { mode: 'string' }).notNull().defaultNow(),
+  createdAt: isoTimestamp('created_at')
+    .notNull()
+    .default(sql`now()`),
   teamId: uuid('team_id').references(() => teams.id, { onDelete: 'cascade' }),
   public: boolean('public').notNull().default(false),
 });
@@ -99,26 +120,15 @@ export const acountsToBoards = pgTable(
       .notNull()
       .references(() => boards.id, { onDelete: 'cascade' }),
     privateId: uuid('private_id').defaultRandom().notNull(),
-    role: roleEnumWithGuest('role').notNull().default('member'),
-    lastAccessedAt: timestamp('last_accessed_at', { mode: 'string' }),
+    role: roleEnum('role').notNull().default('member'),
+    lastAccessedAt: isoTimestamp('last_accessed_at'),
   },
-  (t) => ({
-    pk: primaryKey(t.accountId, t.boardId),
-  }),
-);
-
-export const accountsToBoardsRelations = relations(
-  acountsToBoards,
-  ({ one }) => ({
-    board: one(boards, {
-      fields: [acountsToBoards.boardId],
-      references: [boards.id],
+  (t) => [
+    primaryKey({
+      columns: [t.accountId, t.boardId],
+      name: 'accounts_boards_account_id_board_id',
     }),
-    account: one(accounts, {
-      fields: [acountsToBoards.accountId],
-      references: [accounts.id],
-    }),
-  }),
+  ],
 );
 
 export const starreds = pgTable(
@@ -131,9 +141,12 @@ export const starreds = pgTable(
       .notNull()
       .references(() => boards.id, { onDelete: 'cascade' }),
   },
-  (t) => ({
-    pk: primaryKey(t.accountId, t.boardId),
-  }),
+  (t) => [
+    primaryKey({
+      columns: [t.accountId, t.boardId],
+      name: 'starreds_account_id_board_id',
+    }),
+  ],
 );
 
 export const teams = pgTable('teams', {
@@ -150,28 +163,16 @@ export const teamMembers = pgTable(
     accountId: varchar('account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    role: roleEnum('role').notNull().default('member'),
+    role: roleEnum('role').$type<TeamRole>().notNull().default('member'),
   },
-  (t) => ({
-    pk: primaryKey(t.teamId, t.accountId),
-  }),
+  (t) => [
+    primaryKey({
+      columns: [t.teamId, t.accountId],
+      name: 'team_members_team_id_account_id',
+    }),
+    check('team_members_role_chk', sql`${t.role} IN ('admin', 'member')`),
+  ],
 );
-
-export const teamRelations = relations(teams, ({ many }) => ({
-  boards: many(boards),
-  spaces: many(spaces),
-}));
-
-export const teamMemberRelations = relations(teamMembers, ({ one }) => ({
-  team: one(teams, {
-    fields: [teamMembers.teamId],
-    references: [teams.id],
-  }),
-  account: one(accounts, {
-    fields: [teamMembers.accountId],
-    references: [accounts.id],
-  }),
-}));
 
 export const invitations = pgTable(
   'invitations',
@@ -188,40 +189,21 @@ export const invitations = pgTable(
     inviterId: varchar('inviter_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    role: roleEnumWithGuest('role').notNull().default('member'),
-    createdAt: timestamp('created_at', { mode: 'string' })
+    role: roleEnum('role').notNull().default('member'),
+    createdAt: isoTimestamp('created_at')
       .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { mode: 'string' })
+      .default(sql`now()`),
+    updatedAt: isoTimestamp('updated_at')
       .notNull()
-      .defaultNow(),
+      .default(sql`now()`),
   },
-  (t) => ({
-    unqTeam: unique().on(t.teamId, t.userId),
-    unqBoard: unique().on(t.boardId, t.userId),
-    unqTeamEmail: unique().on(t.teamId, t.email),
-    unqBoardEmail: unique().on(t.boardId, t.email),
-  }),
+  (t) => [
+    unique().on(t.teamId, t.userId),
+    unique().on(t.boardId, t.userId),
+    unique().on(t.teamId, t.email),
+    unique().on(t.boardId, t.email),
+  ],
 );
-
-export const invitationRelations = relations(invitations, ({ one }) => ({
-  team: one(teams, {
-    fields: [invitations.teamId],
-    references: [teams.id],
-  }),
-  board: one(boards, {
-    fields: [invitations.boardId],
-    references: [boards.id],
-  }),
-  inviter: one(accounts, {
-    fields: [invitations.inviterId],
-    references: [accounts.id],
-  }),
-  user: one(accounts, {
-    fields: [invitations.userId],
-    references: [accounts.id],
-  }),
-}));
 
 export const boardFiles = pgTable('board_files', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -229,7 +211,9 @@ export const boardFiles = pgTable('board_files', {
     .notNull()
     .references(() => boards.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 256 }).notNull(),
-  createdAt: timestamp('created_at', { mode: 'string' }).notNull().defaultNow(),
+  createdAt: isoTimestamp('created_at')
+    .notNull()
+    .default(sql`now()`),
 });
 
 export const notifications = pgTable('notifications', {
@@ -242,7 +226,9 @@ export const notifications = pgTable('notifications', {
     onDelete: 'cascade',
   }),
   nodeId: uuid('node_id'),
-  createdAt: timestamp('created_at', { mode: 'string' }).notNull().defaultNow(),
+  createdAt: isoTimestamp('created_at')
+    .notNull()
+    .default(sql`now()`),
 });
 
 export const spaces = pgTable('spaces', {
@@ -251,7 +237,9 @@ export const spaces = pgTable('spaces', {
   teamId: uuid('team_id')
     .references(() => teams.id, { onDelete: 'cascade' })
     .notNull(),
-  createdAt: timestamp('created_at', { mode: 'string' }).notNull().defaultNow(),
+  createdAt: isoTimestamp('created_at')
+    .notNull()
+    .default(sql`now()`),
 });
 
 export const spaceToBoards = pgTable(
@@ -264,12 +252,10 @@ export const spaceToBoards = pgTable(
       .notNull()
       .references(() => boards.id, { onDelete: 'cascade' }),
   },
-  (t) => ({
-    pk: primaryKey(t.spaceId, t.boardId),
-  }),
+  (t) => [
+    primaryKey({
+      columns: [t.spaceId, t.boardId],
+      name: 'space_boards_space_id_board_id',
+    }),
+  ],
 );
-
-export const boardsRelations = relations(boards, ({ many }) => ({
-  accountsToBoards: many(acountsToBoards),
-  spaceToBoards: many(spaceToBoards),
-}));

@@ -1,1 +1,0 @@
-ALTER TABLE "space_boards" ADD CONSTRAINT "space_boards_space_id_board_id" PRIMARY KEY("space_id","board_id");

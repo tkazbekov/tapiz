@@ -22,6 +22,7 @@ import { registerAgentSessionRoute } from './agent-auth.js';
 import { authenticateApiToken } from './authenticate-api-token.js';
 import { mentionRateLimitKey } from './rate-limited.js';
 import db from './db/index.js';
+import { DrizzleQueryError } from 'drizzle-orm';
 import {
   createWsAllowRequest,
   getFrontendOrigin,
@@ -49,6 +50,22 @@ const fastify = Fastify({
   routerOptions: {
     maxParamLength: 5000,
   },
+});
+
+// drizzle's error message includes the SQL and its params (hashes, board
+// state); reply with the driver's message instead.
+fastify.setErrorHandler((error, _request, reply) => {
+  if (error instanceof DrizzleQueryError) {
+    console.error(error);
+
+    return reply.code(500).send({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: error.cause?.message ?? 'Internal Server Error',
+    });
+  }
+
+  throw error;
 });
 
 // No connectionStateRecovery: recovered sockets would skip re-validation;

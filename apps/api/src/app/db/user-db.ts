@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { eq, and, or, desc, sql, gt, SQL } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  or,
+  desc,
+  sql,
+  gt,
+  SQL,
+  DrizzleQueryError,
+} from 'drizzle-orm';
 import { db } from './init-db.js';
 import * as schema from '../schema.js';
 import {
@@ -39,6 +48,11 @@ export class EmailTakenError extends Error {
 }
 
 function isEmailTaken(e: unknown) {
+  // drizzle wraps driver errors; the PostgresError is the cause.
+  if (e instanceof DrizzleQueryError) {
+    e = e.cause;
+  }
+
   return (
     typeof e === 'object' &&
     e !== null &&

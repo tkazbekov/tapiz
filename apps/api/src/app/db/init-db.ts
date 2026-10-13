@@ -11,20 +11,45 @@ function getConnection() {
   return connection;
 }
 
+// The `timestamp` (without time zone) columns hold UTC and default to now(),
+// which writes the session's local time; pin the session to UTC.
+const connectionParams = { TimeZone: 'UTC' };
+
 function initDbClient() {
   const connection = getConnection();
 
-  psqlClient = postgres(connection);
+  psqlClient = postgres(connection, { connection: connectionParams });
 
   db = drizzle(psqlClient);
 
   return db;
 }
 
-async function dbMigrate() {
-  const connection = getConnection();
-  const migrationClient = postgres(connection, { max: 1 });
+// Arbitrary key for pg_advisory_lock.
+const MIGRATION_LOCK_KEY = 7_301_947;
 
+// Generated migrations aren't idempotent (plain CREATE TYPE/TABLE), so
+// processes starting at once (API instances, parallel test files) take turns;
+// later ones find the migrations applied and skip them.
+export async function runMigrations(
+  connection: string,
+  migrationsFolder: string,
+) {
+  const migrationClient = postgres(connection, {
+    max: 1,
+    connection: connectionParams,
+  });
+
+  try {
+    await migrationClient`SELECT pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
+    await migrate(drizzle(migrationClient), { migrationsFolder });
+  } finally {
+    // closing the session releases the lock
+    await migrationClient.end();
+  }
+}
+
+async function dbMigrate() {
   let migrationsFolder = 'drizzle';
 
   // pnpm run test:e2e
@@ -32,9 +57,7 @@ async function dbMigrate() {
     migrationsFolder = '../../drizzle';
   }
 
-  await migrate(drizzle(migrationClient), { migrationsFolder });
-
-  return;
+  await runMigrations(getConnection(), migrationsFolder);
 }
 
 export async function startDB() {
@@ -43,7 +66,7 @@ export async function startDB() {
       await dbMigrate();
       initDbClient();
     } catch (e) {
-      console.log('Error connecting to DB, retrying in 2 seconds');
+      console.log('Error connecting to DB, retrying in 2 seconds', e);
       setTimeout(run, 2000);
     }
   };

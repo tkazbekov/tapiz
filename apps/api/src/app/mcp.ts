@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Socket } from 'socket.io';
 import { z } from 'zod';
+import { DrizzleQueryError } from 'drizzle-orm';
 import {
   type CocomaterialApiListVectors,
   type CocomaterialApiVector,
@@ -142,6 +143,26 @@ class McpSocket {
   disconnect() {
     return this;
   }
+}
+
+// The SDK sends a throwing tool's error.message to the client, and drizzle's
+// includes the SQL and its params; send the driver's message instead.
+export function hideQueryDetails<Args extends unknown[], Result>(
+  handler: (...args: Args) => Promise<Result>,
+) {
+  return async (...args: Args): Promise<Result> => {
+    try {
+      return await handler(...args);
+    } catch (e) {
+      if (e instanceof DrizzleQueryError) {
+        console.error(e);
+
+        throw new Error(e.cause?.message ?? 'Database error');
+      }
+
+      throw e;
+    }
+  };
 }
 
 function textResult(content: unknown) {
@@ -300,7 +321,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async ({ boardId }) => {
+    hideQueryDetails(async ({ boardId }) => {
       const haveAccess = await db.board.haveAccess(boardId, user.id);
 
       if (!haveAccess) {
@@ -322,7 +343,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         boardId,
         nodes: persistedBoard?.board ?? [],
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -357,7 +378,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async ({ boardId, node, parent, position }) => {
+    hideQueryDetails(async ({ boardId, node, parent, position }) => {
       const result = await applyBoardActionsAsMcpUser(
         boardServer,
         user,
@@ -373,7 +394,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       );
 
       return textResult(result);
-    },
+    }),
   );
 
   server.registerTool(
@@ -411,27 +432,29 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async ({ boardId, id, type, content, parent, position }) => {
-      const result = await applyBoardActionsAsMcpUser(
-        boardServer,
-        user,
-        boardId,
-        [
-          {
-            op: 'patch',
-            data: {
-              id,
-              type,
-              content,
+    hideQueryDetails(
+      async ({ boardId, id, type, content, parent, position }) => {
+        const result = await applyBoardActionsAsMcpUser(
+          boardServer,
+          user,
+          boardId,
+          [
+            {
+              op: 'patch',
+              data: {
+                id,
+                type,
+                content,
+              },
+              parent,
+              position,
             },
-            parent,
-            position,
-          },
-        ],
-      );
+          ],
+        );
 
-      return textResult(result);
-    },
+        return textResult(result);
+      },
+    ),
   );
 
   server.registerTool(
@@ -459,7 +482,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async ({ boardId, id, type, parent }) => {
+    hideQueryDetails(async ({ boardId, id, type, parent }) => {
       const result = await applyBoardActionsAsMcpUser(
         boardServer,
         user,
@@ -477,7 +500,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       );
 
       return textResult(result);
-    },
+    }),
   );
 
   server.registerTool(
@@ -506,7 +529,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async ({ boardId, actions }) => {
+    hideQueryDetails(async ({ boardId, actions }) => {
       const result = await applyBoardActionsAsMcpUser(
         boardServer,
         user,
@@ -515,7 +538,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       );
 
       return textResult(result);
-    },
+    }),
   );
 
   server.registerTool(
@@ -533,7 +556,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: false,
       },
     },
-    async () => {
+    hideQueryDetails(async () => {
       const dbUser = await db.user.getUser(user.id);
 
       return textResult({
@@ -544,7 +567,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         },
         settings: withDefaultUserSettings(dbUser?.settings),
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -562,13 +585,13 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: true,
       },
     },
-    async () => {
+    hideQueryDetails(async () => {
       const tags = await fetchCocomaterial<CocomaterialTag[]>('/tags');
 
       return textResult({
         tags,
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -598,7 +621,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: true,
       },
     },
-    async ({ page, pageSize, tags }) => {
+    hideQueryDetails(async ({ page, pageSize, tags }) => {
       const params = new URLSearchParams({
         page: page.toString(),
         page_size: pageSize.toString(),
@@ -618,7 +641,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         previous: result.previous,
         results: result.results.map(compactCocomaterialVector),
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -636,7 +659,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
         openWorldHint: true,
       },
     },
-    async ({ boardId, ...nodeInput }) => {
+    hideQueryDetails(async ({ boardId, ...nodeInput }) => {
       const result = await applyBoardActionsAsMcpUser(
         boardServer,
         user,
@@ -645,7 +668,7 @@ function createTapizMcpServer(boardServer: Server, user: McpUser) {
       );
 
       return textResult(result);
-    },
+    }),
   );
 
   return server;

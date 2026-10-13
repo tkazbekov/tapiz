@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { Server as WsServer } from 'socket.io';
 import { vi } from 'vitest';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { startDB } from './db/init-db.js';
 import db from './db/index.js';
 import {
   applyBoardActionsAsMcpUser,
   createCocomaterialNodeAction,
+  hideQueryDetails,
   TAPIZ_MCP_INSTRUCTIONS,
 } from './mcp.js';
 import { Server } from './server.js';
@@ -163,5 +165,41 @@ describe('mcp', () => {
         },
       },
     });
+  });
+
+  it('hides the SQL and params of failed queries from tool errors', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const handler = hideQueryDetails(
+      async ({ boardId }: { boardId: string }) => {
+        throw new DrizzleQueryError(
+          'select "board" from "boards" where "id" = $1',
+          [boardId],
+          new Error('duplicate key value violates unique constraint'),
+        );
+      },
+    );
+
+    const error = await handler({ boardId: 'secret-board-id' }).catch(
+      (e: Error) => e,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'duplicate key value violates unique constraint',
+    );
+    expect((error as Error).message).not.toContain('Failed query');
+    expect((error as Error).message).not.toContain('secret-board-id');
+
+    const other = new Error('Unable to read board with this API token');
+
+    await expect(
+      hideQueryDetails(async () => {
+        throw other;
+      })(),
+    ).rejects.toBe(other);
+
+    consoleError.mockRestore();
   });
 });
