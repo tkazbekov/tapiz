@@ -1,7 +1,17 @@
 import type { TuNode } from '../models/node.model.js';
-import { expandLayout, type ExpandedLayout } from './expand.js';
-import { rectContains } from './geometry.js';
-import type { LayoutSpecInput } from './layout-spec.js';
+import {
+  expandLayout,
+  LAYOUT_EXAMPLES,
+  LAYOUT_SIZES,
+  type ExpandedLayout,
+} from './expand.js';
+import {
+  boundsOfNodes,
+  nodeBounds,
+  rectContains,
+  type Rect,
+} from './geometry.js';
+import type { LayoutDecoration, LayoutSpecInput } from './layout-spec.js';
 import { lintNodes } from './lint.js';
 import { boardTemplateDataSchema } from './template-format.js';
 import { estimatePanelTextBottom } from './text-estimate.js';
@@ -293,5 +303,519 @@ describe('expandLayout', () => {
         })),
       }),
     ).toThrow(/layout_too_large/);
+  });
+});
+
+const STAR = 'https://cocomaterial.com/media/sea_starfish_1.svg';
+const PNG = 'https://cocomaterial.com/media/photo.png';
+
+const deco = (
+  anchor: LayoutDecoration['anchor'],
+  extra: Partial<LayoutDecoration> = {},
+): LayoutDecoration => ({
+  url: STAR,
+  anchor,
+  width: 200,
+  height: 100,
+  ...extra,
+});
+
+const radial = (
+  count: number,
+  extra: Partial<LayoutSpecInput> = {},
+): LayoutSpecInput => ({
+  kind: 'radial',
+  cells: Array.from({ length: count }, (_, i) => ({ title: `Arm ${i}` })),
+  ...extra,
+});
+
+function must<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) {
+    throw new Error(`missing ${what}`);
+  }
+
+  return value;
+}
+
+const layoutBounds = (layout: ExpandedLayout) =>
+  must(boundsOfNodes(asBoardNodes(layout)), 'bounds');
+
+const rectOfRef = (layout: ExpandedLayout, ref: string): Rect => {
+  const node = layout.template.nodes.find((it) => it.ref === ref);
+
+  if (!node) {
+    throw new Error(`no node ${ref}`);
+  }
+
+  return must(
+    nodeBounds({ id: ref, type: node.type, content: node.content }),
+    `bounds of ${ref}`,
+  );
+};
+
+const centre = (rect: Rect) => ({
+  x: rect.x + rect.width / 2,
+  y: rect.y + rect.height / 2,
+});
+
+const gap = (a: Rect, b: Rect) =>
+  Math.max(
+    b.x - (a.x + a.width),
+    a.x - (b.x + b.width),
+    b.y - (a.y + a.height),
+    a.y - (b.y + b.height),
+  );
+
+describe('expandLayout radial', () => {
+  const holes = [
+    undefined,
+    deco('center', { width: 600, height: 616 }),
+    deco('center', { width: 1500, height: 300, rotation: 30 }),
+  ];
+  // default cells, wide flat cells and narrow tall cells
+  const shapes: Partial<LayoutSpecInput>[] = [
+    {},
+    { noteColumns: 4 },
+    { noteColumns: 1 },
+  ];
+
+  it('keeps cells apart and clear of the centre art for 2 to 8 cells', () => {
+    holes.forEach((hole) => {
+      shapes.forEach((shape) => {
+        for (let count = 2; count <= 8; count++) {
+          const base = radial(count, shape);
+          const layout = expand({
+            ...base,
+            cells: base.cells.map((cell) => ({
+              ...cell,
+              capacity: shape.noteColumns === 4 ? 1 : undefined,
+            })),
+            ...(hole ? { decorations: [hole] } : {}),
+          });
+          const rects = layout.cells.map((cell) => cell.bounds);
+
+          rects.forEach((a, i) => {
+            rects.slice(i + 1).forEach((b) => {
+              expect(gap(a, b)).toBeGreaterThanOrEqual(LAYOUT_SIZES.CELL_GAP);
+            });
+
+            if (hole) {
+              expect(
+                gap(a, rectOfRef(layout, 'decoration-0')),
+              ).toBeGreaterThanOrEqual(LAYOUT_SIZES.CELL_GAP);
+            }
+          });
+        }
+      });
+    });
+  });
+
+  it('places the centre art in the middle of the ring', () => {
+    const layout = expand(radial(6, { decorations: [deco('center')] }));
+    const art = centre(rectOfRef(layout, 'decoration-0'));
+    const cells = layout.cells.map((cell) => centre(cell.bounds));
+    const mean = {
+      x: cells.reduce((sum, it) => sum + it.x, 0) / cells.length,
+      y: cells.reduce((sum, it) => sum + it.y, 0) / cells.length,
+    };
+
+    expect(Math.abs(art.x - mean.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(art.y - mean.y)).toBeLessThanOrEqual(1);
+
+    const radii = cells.map((it) => Math.hypot(it.x - art.x, it.y - art.y));
+
+    radii.forEach((radius) => {
+      expect(Math.abs(radius - radii[0])).toBeLessThanOrEqual(2);
+    });
+  });
+
+  it('grows the ring around bigger centre art', () => {
+    const radius = (layout: ExpandedLayout) =>
+      centre(layout.cells[0].bounds).y - centre(layout.cells[2].bounds).y;
+    const small = expand(radial(4, { decorations: [deco('center')] }));
+    const big = expand(
+      radial(4, {
+        decorations: [deco('center', { width: 3000, height: 3000 })],
+      }),
+    );
+
+    expect(Math.abs(radius(big))).toBeGreaterThan(Math.abs(radius(small)));
+  });
+
+  it('starts at the top and goes clockwise', () => {
+    [3, 4, 5, 8].forEach((count) => {
+      const layout = expand(radial(count, { decorations: [deco('center')] }));
+      const middle = centre(rectOfRef(layout, 'decoration-0'));
+      const angles = layout.cells.map((cell) => {
+        const at = centre(cell.bounds);
+
+        // clockwise on screen from 12 o'clock, in [0, 360)
+        return (
+          ((Math.atan2(at.x - middle.x, -(at.y - middle.y)) * 180) / Math.PI +
+            360) %
+          360
+        );
+      });
+
+      expect(angles[0]).toBeLessThan(1);
+      angles.slice(1).forEach((angle, i) => {
+        expect(angle).toBeGreaterThan(angles[i]);
+        expect(angle - angles[i]).toBeCloseTo(360 / count, 0);
+      });
+    });
+  });
+
+  it('puts the title above the ring and starts at the origin', () => {
+    const layout = expand(
+      radial(5, { title: 'Starfish', decorations: [deco('center')] }),
+    );
+    const title = rectOfRef(layout, 'title');
+
+    layout.cells.forEach((cell) => {
+      expect(cell.bounds.y).toBeGreaterThanOrEqual(
+        title.y + title.height + LAYOUT_SIZES.TITLE_GAP,
+      );
+    });
+    expect(boundsOfNodes(asBoardNodes(layout))).toMatchObject({ x: 0, y: 0 });
+  });
+
+  it('defaults radial cells to two rows of notes', () => {
+    const [cell] = expand(radial(3)).cells;
+
+    expect(cell.freeSlots).toHaveLength(4);
+  });
+});
+
+describe('expandLayout cell styles', () => {
+  const panelOf = (style: Record<string, unknown>, extra = {}) =>
+    expand({
+      kind: 'columns',
+      cells: [{ title: 'A', style, ...extra }],
+    }).template.nodes.find((node) => node.type === 'panel')?.content ?? {};
+
+  it('maps shapes to border radii', () => {
+    expect(panelOf({}).borderRadius).toBe(12);
+    expect(panelOf({ shape: 'rect' }).borderRadius).toBe(0);
+    expect(panelOf({ shape: 'rounded' }).borderRadius).toBe(24);
+    expect(panelOf({ shape: 'pill' }).borderRadius).toBe(150);
+
+    const pill = expand({
+      kind: 'columns',
+      noteColumns: 1,
+      cells: [{ title: 'A', style: { shape: 'pill' } }],
+    }).template.nodes[0].content;
+
+    expect(pill['borderRadius']).toBe(
+      Math.min(
+        150,
+        Math.floor(
+          Math.min(pill['width'] as number, pill['height'] as number) / 2,
+        ),
+      ),
+    );
+    expect(Number.isInteger(pill['borderRadius'])).toBe(true);
+  });
+
+  it('sets colours and borders, never the panel color', () => {
+    const content = panelOf(
+      { backgroundColor: '#112233', borderColor: '#445566', borderWidth: 6 },
+      { backgroundColor: '#ffffff' },
+    );
+
+    expect(content).toMatchObject({
+      backgroundColor: '#112233',
+      borderColor: '#445566',
+      borderWidth: 6,
+    });
+    expect(content).not.toHaveProperty('color');
+    expect(panelOf({}, { backgroundColor: '#e6f4ea' }).backgroundColor).toBe(
+      '#e6f4ea',
+    );
+  });
+
+  it('makes frameless cells transparent without a border', () => {
+    const content = panelOf(
+      { frameless: true, backgroundColor: '#112233', borderWidth: 4 },
+      { backgroundColor: '#ffffff' },
+    );
+
+    expect(content).toMatchObject({
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+    });
+    expect(content).not.toHaveProperty('color');
+  });
+});
+
+describe('expandLayout decorations', () => {
+  const base: LayoutSpecInput = {
+    kind: 'grid',
+    title: 'Board',
+    gridColumns: 2,
+    cells: [{ title: 'A', notes: ['x'] }, { title: 'B' }, { title: 'C' }],
+  };
+  const withDecorations = (...decorations: LayoutDecoration[]) =>
+    expand({ ...base, decorations });
+  const cellsRect = (layout: ExpandedLayout) =>
+    layout.cells
+      .map((cell) => cell.bounds)
+      .reduce((a, b) => {
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+
+        return {
+          x,
+          y,
+          width: Math.max(a.x + a.width, b.x + b.width) - x,
+          height: Math.max(a.y + a.height, b.y + b.height) - y,
+        };
+      });
+
+  it('emits vectors for svg and images otherwise, on layer 1', () => {
+    const layout = withDecorations(
+      deco('center'),
+      deco('top-left', { url: PNG }),
+    );
+
+    expect(
+      layout.template.nodes.find((n) => n.ref === 'decoration-0'),
+    ).toMatchObject({
+      type: 'vector',
+      content: { url: STAR, layer: 1, rotation: 0, width: 200, height: 100 },
+    });
+    expect(
+      layout.template.nodes.find((n) => n.ref === 'decoration-1'),
+    ).toMatchObject({ type: 'image', content: { url: PNG, layer: 1 } });
+  });
+
+  it('orders behind art first, then panels, stickers, texts and notes', () => {
+    const layout = withDecorations(
+      deco('top-right'),
+      deco('behind', { width: 2000, height: 2000 }),
+      deco({ cell: 0, corner: 'top-left' }),
+    );
+    const refs = layout.template.nodes.map((node) => node.ref);
+
+    expect(refs).toEqual([
+      'decoration-1',
+      'cell-0',
+      'cell-1',
+      'cell-2',
+      'decoration-0',
+      'decoration-2',
+      'title',
+      'cell-0-note-0',
+    ]);
+  });
+
+  it('centres center and behind art on the cells', () => {
+    const layout = withDecorations(deco('center'), deco('behind'));
+    const middle = centre(cellsRect(layout));
+
+    ['decoration-0', 'decoration-1'].forEach((ref) => {
+      const at = centre(rectOfRef(layout, ref));
+
+      expect(Math.abs(at.x - middle.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(at.y - middle.y)).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it('puts corner stickers half outside the whole layout', () => {
+    const layout = withDecorations(
+      deco('top-left'),
+      deco('top-right'),
+      deco('bottom-left'),
+      deco('bottom-right'),
+    );
+    const title = rectOfRef(layout, 'title');
+    const grid = cellsRect(layout);
+    const corners = [
+      { x: grid.x, y: title.y },
+      { x: grid.x + grid.width, y: title.y },
+      { x: grid.x, y: grid.y + grid.height },
+      { x: grid.x + grid.width, y: grid.y + grid.height },
+    ];
+
+    corners.forEach((corner, index) => {
+      const at = centre(rectOfRef(layout, `decoration-${index}`));
+
+      expect(Math.abs(at.x - corner.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(at.y - corner.y)).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it('anchors stickers to a cell corner or centre, plus the offset', () => {
+    const layout = withDecorations(
+      deco({ cell: 1, corner: 'bottom-right' }),
+      deco({ cell: 2, corner: 'center' }, { offset: { x: 30, y: -20 } }),
+    );
+    const one = layout.cells[1].bounds;
+    const two = centre(layout.cells[2].bounds);
+
+    expect(centre(rectOfRef(layout, 'decoration-0'))).toEqual({
+      x: one.x + one.width,
+      y: one.y + one.height,
+    });
+    const art = centre(rectOfRef(layout, 'decoration-1'));
+
+    // positions are whole pixels
+    expect(Math.abs(art.x - (two.x + 30))).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(art.y - (two.y - 20))).toBeLessThanOrEqual(0.5);
+  });
+
+  it('keeps the visual centre of rotated art on its anchor', () => {
+    const plain = withDecorations(deco({ cell: 0, corner: 'center' }));
+    const rotated = withDecorations(
+      deco({ cell: 0, corner: 'center' }, { rotation: 45 }),
+    );
+    const at = (layout: ExpandedLayout) =>
+      centre(rectOfRef(layout, 'decoration-0'));
+
+    expect(Math.abs(at(rotated).x - at(plain).x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(at(rotated).y - at(plain).y)).toBeLessThanOrEqual(1);
+  });
+
+  it('includes decorations in the bounds and normalises to the origin', () => {
+    const layout = withDecorations(
+      deco('top-left', { width: 800, height: 800 }),
+      deco('bottom-right', { width: 800, height: 800, rotation: 30 }),
+    );
+    const bounds = layoutBounds(layout);
+
+    expect(bounds).toMatchObject({ x: 0, y: 0 });
+    expect(rectOfRef(layout, 'decoration-0')).toMatchObject({ x: 0, y: 0 });
+    expect(layout.cells[0].bounds.x).toBeGreaterThan(0);
+    // the rotated sticker sets the far corner; the size rounds up
+    expect(layout.template.size).toEqual({
+      width: Math.ceil(bounds.width),
+      height: Math.ceil(bounds.height),
+    });
+    const sticker = rectOfRef(layout, 'decoration-1');
+
+    expect(sticker.x + sticker.width).toBeCloseTo(bounds.width, 6);
+    expect(sticker.y + sticker.height).toBeCloseTo(bounds.height, 6);
+  });
+
+  it('keeps whole-pixel positions when rotated art sets the bounds', () => {
+    const layout = withDecorations(
+      deco('top-left', { width: 333, height: 211, rotation: 17 }),
+    );
+    const bounds = layoutBounds(layout);
+
+    layout.template.nodes.forEach((node) => {
+      expect(Number.isInteger(node.content.position.x)).toBe(true);
+      expect(Number.isInteger(node.content.position.y)).toBe(true);
+    });
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x).toBeLessThan(1);
+    expect(layout.template.size.width).toBeGreaterThanOrEqual(
+      bounds.x + bounds.width,
+    );
+  });
+});
+
+describe('expandLayout radial whole pixels', () => {
+  it.each([
+    [{ width: 1501, height: 333, rotation: 33, offset: { x: 37, y: -11 } }],
+    [{ width: 2001, height: 2001, rotation: 45 }],
+    [{ width: 999, height: 999, rotation: 17 }],
+  ])('keeps 2 cells around wide odd centre art on whole pixels: %o', (art) => {
+    const layout = expand(radial(2, { decorations: [deco('center', art)] }));
+
+    layout.cells.forEach((cell) => {
+      expect(Number.isInteger(cell.bounds.x)).toBe(true);
+      expect(Number.isInteger(cell.bounds.y)).toBe(true);
+      cell.freeSlots.forEach((slot) => {
+        expect(Number.isInteger(slot.x)).toBe(true);
+        expect(Number.isInteger(slot.y)).toBe(true);
+      });
+    });
+    layout.template.nodes
+      .filter((node) => node.type !== 'vector')
+      .forEach((node) => {
+        expect(Number.isInteger(node.content.position.x)).toBe(true);
+        expect(Number.isInteger(node.content.position.y)).toBe(true);
+      });
+  });
+});
+
+describe('expandLayout with decorations stays valid and lint-clean', () => {
+  const everyAnchor: LayoutDecoration[] = [
+    deco('behind', { width: 1200, height: 900 }),
+    deco('center', { width: 300, height: 300, rotation: 15 }),
+    deco('top-left'),
+    deco('top-right', { rotation: -20 }),
+    deco('bottom-left', { url: PNG }),
+    deco('bottom-right', { offset: { x: -40, y: 40 } }),
+    deco({ cell: 0, corner: 'top-left' }),
+    deco({ cell: 1, corner: 'top-right' }),
+    deco({ cell: 0, corner: 'bottom-left' }),
+    deco({ cell: 1, corner: 'bottom-right', rotation: 90 }),
+    deco({ cell: 1, corner: 'center' }),
+  ];
+  const specs: [string, LayoutSpecInput][] = [
+    ['columns', { ...retro, decorations: everyAnchor }],
+    ['grid', { ...grid, decorations: everyAnchor }],
+    ['quadrants', { ...quadrants, decorations: everyAnchor }],
+    [
+      'radial',
+      {
+        ...radial(5, { title: 'Starfish', description: 'Five arms' }),
+        cells: radial(5).cells.map((cell, i) => ({
+          ...cell,
+          notes: i === 0 ? ['a', 'b'] : [],
+          style: i % 2 ? { frameless: true } : { shape: 'pill' },
+        })),
+        decorations: everyAnchor,
+      },
+    ],
+    ['starfish example', LAYOUT_EXAMPLES.starfish],
+    ['movie example', LAYOUT_EXAMPLES.movieRetro],
+  ];
+
+  it.each(specs)('%s', (_, spec) => {
+    const layout = expand(spec);
+
+    expect(boardTemplateDataSchema.safeParse(layout.template).success).toBe(
+      true,
+    );
+    expect(lintNodes(asBoardNodes(layout), { isAdmin: true })).toEqual([]);
+    layout.template.nodes.forEach((node) => {
+      if (node.type === 'panel') {
+        expect(node.content).not.toHaveProperty('color');
+      }
+    });
+    // decorations sit below every note
+    const types = layout.template.nodes.map((node) => node.type);
+    const firstNote = types.indexOf('note');
+
+    if (firstNote >= 0) {
+      expect(
+        types
+          .slice(firstNote)
+          .some((type) => type === 'vector' || type === 'image'),
+      ).toBe(false);
+    }
+
+    expect(expand(spec)).toEqual(layout);
+  });
+
+  it('keeps notes inside their radial cells', () => {
+    const layout = expand(specs[3][1]);
+    const byRef = new Map(layout.template.nodes.map((n) => [n.ref, n]));
+
+    layout.cells.forEach((cell) => {
+      cell.noteRefs.forEach((ref) => {
+        const note = must(byRef.get(ref), ref);
+
+        expect(
+          rectContains(cell.bounds, {
+            ...note.content.position,
+            width: 300,
+            height: 300,
+          }),
+        ).toBe(true);
+      });
+    });
   });
 });

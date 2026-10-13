@@ -46,8 +46,8 @@ const isPoint = (value: unknown): value is Point =>
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-// rotation in degrees
-function rotate(point: Point, rotation: number): Point {
+// rotation in degrees, clockwise on screen (y points down)
+export function rotatePoint(point: Point, rotation: number): Point {
   const rad = (rotation * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -99,7 +99,7 @@ function attachedPoint(
   }
 
   const { width, height } = nodeSize(node);
-  const offset = rotate(
+  const offset = rotatePoint(
     {
       x: clamp(attachment.offset.x, 0, width),
       y: clamp(attachment.offset.y, 0, height),
@@ -174,7 +174,7 @@ export function nodeBounds(node: TuNode, byId?: NodesById): Rect | null {
     [0, height],
     [width, height],
   ].map(([x, y]) => {
-    const offset = rotate({ x, y }, rotation);
+    const offset = rotatePoint({ x, y }, rotation);
 
     return { x: position.x + offset.x, y: position.y + offset.y };
   });

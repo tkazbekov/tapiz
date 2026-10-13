@@ -231,6 +231,33 @@ describe('lintNodes', () => {
     expect(codes(nodes, { scopeIds: ['b'] })).toEqual(['note_overlap']);
   });
 
+  it('ignores decoration art over notes and panel headers', () => {
+    const art = (id: string, type: 'vector' | 'image'): TuNode => ({
+      id,
+      type,
+      content: {
+        position: { x: -50, y: -50 },
+        width: 800,
+        height: 800,
+        layer: 1,
+        rotation: 0,
+        url: 'https://cocomaterial.com/media/sea_starfish_1.svg',
+      },
+    });
+
+    expect(
+      codes(
+        [
+          art('behind', 'vector'),
+          panel('p'),
+          art('sticker', 'image'),
+          note('a', 40, 160),
+        ],
+        { isAdmin: true },
+      ),
+    ).toEqual([]);
+  });
+
   it('ignores runtime nodes', () => {
     expect(
       codes([

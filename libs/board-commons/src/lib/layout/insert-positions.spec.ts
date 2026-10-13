@@ -95,6 +95,59 @@ describe('insert positions', () => {
     expect(ids(apply([], adds))).toEqual(['p1', 'p2', 't']);
   });
 
+  it('keeps art that comes before the panels below them', () => {
+    // expandLayout order: behind art, panels, stickers, texts, notes
+    const adds = [
+      add('behind1', 'vector'),
+      add('behind2', 'image'),
+      add('p1', 'panel'),
+      add('p2', 'panel'),
+      add('sticker', 'vector'),
+      add('t', 'text'),
+      add('n1', 'note'),
+    ];
+
+    expect(ids(apply([], adds))).toEqual([
+      'behind1',
+      'behind2',
+      'p1',
+      'p2',
+      'sticker',
+      't',
+      'n1',
+    ]);
+
+    const board = [
+      node('user', 'user'),
+      node('panelA', 'panel'),
+      node('note1', 'note'),
+    ];
+
+    expect(ids(apply(board, adds))).toEqual([
+      'user',
+      'panelA',
+      'behind1',
+      'behind2',
+      'p1',
+      'p2',
+      'note1',
+      'sticker',
+      't',
+      'n1',
+    ]);
+  });
+
+  it('pushes art on top when no panel follows it', () => {
+    const board = [node('panelA', 'panel'), node('note1', 'note')];
+
+    expect(ids(apply(board, [add('v', 'vector'), add('n1', 'note')]))).toEqual([
+      'panelA',
+      'note1',
+      'v',
+      'n1',
+    ]);
+  });
+
   it('keeps explicit positions and skips ids already on the board', () => {
     const board = [node('a', 'note'), node('b', 'note')];
     const adds = [

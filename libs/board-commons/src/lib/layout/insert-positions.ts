@@ -26,7 +26,9 @@ export function defaultInsertIndex(
 /**
  * Gives each add the index it lands at when the adds are applied in order,
  * so the adds keep their relative order (the web inserts every panel at the
- * same index, which reverses them).
+ * same index, which reverses them). Adds without a rule that come before the
+ * first panel (a layout's 'behind' art) go with the panels, below them,
+ * instead of on top of the board.
  */
 export function assignInsertPositions(
   board: Pick<TuNode, 'id' | 'type'>[],
@@ -34,9 +36,23 @@ export function assignInsertPositions(
 ): NodeAdd[] {
   const running = [...board];
   const ids = new Set(board.map((it) => it.id));
+  const firstPanel = adds.findIndex(
+    (add) => add.position === undefined && add.data.type === 'panel',
+  );
+  // just after the last add placed below the panels
+  let floor = 0;
 
-  return adds.map((add) => {
-    const position = add.position ?? defaultInsertIndex(running, add.data.type);
+  return adds.map((add, index) => {
+    const ruled = defaultInsertIndex(running, add.data.type);
+    const behind =
+      add.position === undefined && ruled === undefined && index < firstPanel;
+    const position =
+      add.position ??
+      (behind
+        ? Math.max(defaultInsertIndex(running, 'panel') ?? 0, floor)
+        : ruled === undefined
+          ? undefined
+          : Math.max(ruled, floor));
 
     if (!ids.has(add.data.id)) {
       ids.add(add.data.id);
@@ -50,6 +66,10 @@ export function assignInsertPositions(
         running.splice(position, 0, add.data);
       } else {
         running.push(add.data);
+      }
+
+      if (behind && position !== undefined) {
+        floor = Math.min(position, running.length - 1) + 1;
       }
     }
 
