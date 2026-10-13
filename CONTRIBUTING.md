@@ -8,7 +8,7 @@
 
 **Prerequisites**
 
-- Node.js 24.13+
+- Node.js 24.15+
 - pnpm 10.12+
 - PostgreSQL
 
