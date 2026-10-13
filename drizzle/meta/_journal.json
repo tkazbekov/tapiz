@@ -8,6 +8,13 @@
       "when": 1791852611665,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791891292209,
+      "tag": "0001_board_templates",
+      "breakpoints": true
     }
   ]
 }

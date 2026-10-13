@@ -3,7 +3,7 @@ import { describe, expect, it, beforeAll, afterEach } from 'vitest';
 import { UserSettings, defaultUserSettings } from '@tapiz/board-commons';
 import { DrizzleQueryError, eq } from 'drizzle-orm';
 import { db, psqlClient, startDB } from './db/init-db';
-import { accounts, boards, teamMembers, teams } from './schema';
+import { accounts, boardTemplates, boards, teamMembers, teams } from './schema';
 
 const createdUserIds: string[] = [];
 const createdTeamIds: string[] = [];
@@ -158,6 +158,81 @@ describe('schema', () => {
           .insert(teamMembers)
           .values({ teamId: team.id, accountId: userId, role: 'admin' }),
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe('board_templates_scope_chk', () => {
+    const template = {
+      name: 'Schema test template',
+      data: {
+        version: 1 as const,
+        size: { width: 0, height: 0 },
+        nodes: [],
+      },
+      nodeCount: 0,
+      width: 0,
+      height: 0,
+    };
+
+    const insertTeam = async () => {
+      const [team] = await db
+        .insert(teams)
+        .values({ name: 'Schema test team' })
+        .returning();
+
+      createdTeamIds.push(team.id);
+
+      return team.id;
+    };
+
+    it('rejects a template with both an account and a team', async () => {
+      const accountId = await insertUser();
+      const teamId = await insertTeam();
+
+      expect(
+        await violatedConstraint(
+          db.insert(boardTemplates).values({ ...template, accountId, teamId }),
+        ),
+      ).toBe('board_templates_scope_chk');
+    });
+
+    it('rejects a template with neither an account nor a team', async () => {
+      expect(
+        await violatedConstraint(db.insert(boardTemplates).values(template)),
+      ).toBe('board_templates_scope_chk');
+    });
+
+    it('allows a personal or a team template', async () => {
+      const accountId = await insertUser();
+      const teamId = await insertTeam();
+
+      // both rows go with their account or team in afterEach
+      await expect(
+        db.insert(boardTemplates).values({ ...template, accountId }),
+      ).resolves.toBeDefined();
+      await expect(
+        db
+          .insert(boardTemplates)
+          .values({ ...template, teamId, createdBy: accountId }),
+      ).resolves.toBeDefined();
+    });
+
+    it('keeps a team template when its creator is deleted', async () => {
+      const createdBy = await insertUser();
+      const teamId = await insertTeam();
+      const [row] = await db
+        .insert(boardTemplates)
+        .values({ ...template, teamId, createdBy })
+        .returning();
+
+      await db.delete(accounts).where(eq(accounts.id, createdBy));
+
+      const rows = await db
+        .select({ createdBy: boardTemplates.createdBy })
+        .from(boardTemplates)
+        .where(eq(boardTemplates.id, row.id));
+
+      expect(rows).toEqual([{ createdBy: null }]);
     });
   });
 

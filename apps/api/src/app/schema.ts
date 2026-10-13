@@ -11,9 +11,14 @@ import {
   index,
   check,
   customType,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { TuNode, UserSettings } from '@tapiz/board-commons';
+import type {
+  BoardTemplateData,
+  TuNode,
+  UserSettings,
+} from '@tapiz/board-commons';
 
 // One Postgres type for every role column. Team members can't be guests;
 // team_members_role_chk enforces that in the database.
@@ -257,5 +262,43 @@ export const spaceToBoards = pgTable(
       columns: [t.spaceId, t.boardId],
       name: 'space_boards_space_id_board_id',
     }),
+  ],
+);
+
+// A template belongs to one account (personal) or one team, never both.
+// created_by only records who saved it, so a team template outlives its
+// creator; the scope check doesn't cover it.
+export const boardTemplates = pgTable(
+  'board_templates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 256 }).notNull(),
+    description: varchar('description', { length: 2000 }),
+    accountId: varchar('account_id').references(() => accounts.id, {
+      onDelete: 'cascade',
+    }),
+    teamId: uuid('team_id').references(() => teams.id, { onDelete: 'cascade' }),
+    createdBy: varchar('created_by').references(() => accounts.id, {
+      onDelete: 'set null',
+    }),
+    // the format version lives inside
+    data: json('data').$type<BoardTemplateData>().notNull(),
+    nodeCount: integer('node_count').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    createdAt: isoTimestamp('created_at')
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: isoTimestamp('updated_at')
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => [
+    index('board_templates_account_id_idx').on(t.accountId),
+    index('board_templates_team_id_idx').on(t.teamId),
+    check(
+      'board_templates_scope_chk',
+      sql`(${t.accountId} IS NULL) <> (${t.teamId} IS NULL)`,
+    ),
   ],
 );
