@@ -158,6 +158,8 @@ export function hideQueryDetails<Args extends unknown[], Result>(
       if (e instanceof DrizzleQueryError) {
         logError(e);
 
+        // no cause: it would carry the query and its params to the caller
+        // eslint-disable-next-line preserve-caught-error
         throw new Error(e.cause?.message ?? 'Database error');
       }
 

@@ -55,7 +55,7 @@ export async function decrypt(
     if (safe) {
       return ciphertext;
     } else {
-      throw new Error('Decrypt failed');
+      throw new Error('Decrypt failed', { cause: e });
     }
   }
 }

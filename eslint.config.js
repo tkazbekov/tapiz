@@ -1,14 +1,11 @@
-import { FlatCompat } from '@eslint/eslintrc';
-import js from '@eslint/js';
-import nxEslintPlugin from '@nx/eslint-plugin';
+import nx from '@nx/eslint-plugin';
+import prettier from 'eslint-config-prettier/flat';
 
-const compat = new FlatCompat({
-  baseDirectory: import.meta.dirname,
-  recommendedConfig: js.configs.recommended,
-});
+const tsFiles = ['**/*.ts', '**/*.tsx', '**/*.cts', '**/*.mts'];
+const jsFiles = ['**/*.js', '**/*.jsx', '**/*.cjs', '**/*.mjs'];
 
 export default [
-  { plugins: { '@nx': nxEslintPlugin } },
+  ...nx.configs['flat/base'],
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     rules: {
@@ -57,36 +54,24 @@ export default [
       ],
     },
   },
-  ...compat
-    .config({
-      extends: [
-        'plugin:@typescript-eslint/recommended',
-        'plugin:@nx/typescript',
-        'prettier',
-      ],
-    })
-    .map((config) => ({
-      ...config,
-      files: ['**/*.ts', '**/*.tsx', '**/*.cts', '**/*.mts'],
-      rules: {
-        ...config.rules,
-        '@typescript-eslint/no-unused-vars': [
-          'error',
-          { caughtErrors: 'none' },
-        ],
-        'no-multiple-empty-lines': [2, { max: 1 }],
-        quotes: ['error', 'single', { avoidEscape: true }],
-        'no-extra-semi': 'error',
-      },
-    })),
-  ...compat.config({ extends: ['plugin:@nx/javascript'] }).map((config) => ({
-    ...config,
-    files: ['**/*.js', '**/*.jsx', '**/*.cjs', '**/*.mjs'],
+  ...nx.configs['flat/typescript'],
+  ...nx.configs['flat/javascript'],
+  prettier,
+  {
+    files: tsFiles,
     rules: {
-      ...config.rules,
+      '@typescript-eslint/no-unused-vars': ['error', { caughtErrors: 'none' }],
+      'no-multiple-empty-lines': [2, { max: 1 }],
+      quotes: ['error', 'single', { avoidEscape: true }],
       'no-extra-semi': 'error',
     },
-  })),
+  },
+  {
+    files: jsFiles,
+    rules: {
+      'no-extra-semi': 'error',
+    },
+  },
   {
     ignores: [
       '**/.astro/**',

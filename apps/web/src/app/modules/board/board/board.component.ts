@@ -12,12 +12,7 @@ import {
 } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { rxEffect } from 'ngxtension/rx-effect';
-import {
-  animationFrameScheduler,
-  combineLatest,
-  merge,
-  Subject,
-} from 'rxjs';
+import { animationFrameScheduler, combineLatest, merge, Subject } from 'rxjs';
 import {
   map,
   withLatestFrom,
@@ -243,26 +238,18 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   }
 
   calcPatterns = computed(() => {
-    let smallCalc = 0;
-    let bigCalc = 0;
-    const zoom = Math.max(this.userZoom(), 0.1);
-    const constant = 0.3;
-    const baseSize = 0.8;
-    const total = baseSize + constant / zoom;
-
-    smallCalc = Math.min(total, 2.5);
     const zoomFactor = Math.max(this.userZoom(), 0.1);
 
     const smallMinSize = 18;
     const smallMaxSize = 45;
-    smallCalc =
+    let smallCalc =
       smallMinSize +
       ((smallMaxSize - smallMinSize) * (zoomFactor - 0.1)) / (1 - 0.1);
     smallCalc = Math.min(smallCalc, smallMaxSize);
 
     const bigMinSize = 300;
     const bigMaxSize = 1600;
-    bigCalc =
+    let bigCalc =
       bigMinSize + ((bigMaxSize - bigMinSize) * (zoomFactor - 0.1)) / (1 - 0.1);
     bigCalc = Math.max(bigCalc, bigMinSize);
 

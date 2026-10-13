@@ -565,8 +565,7 @@ export async function getBoards(
     spaceId,
   } = options;
 
-  let teamIds: string[] = [];
-  let whereClauses: (SQLWrapper | undefined)[] = [];
+  let whereClauses: (SQLWrapper | undefined)[];
   const teamRoles: Record<string, string> = {};
 
   if (teamId && spaceId) {
@@ -605,7 +604,7 @@ export async function getBoards(
     whereClauses = [eq(schema.boards.teamId, teamId)];
   } else {
     const teams = await team.getUserTeams(userId);
-    teamIds = teams.map((team) => team.id);
+    const teamIds = teams.map((team) => team.id);
 
     for (const team of teams) {
       teamRoles[team.id] = team.teamMember.role;
