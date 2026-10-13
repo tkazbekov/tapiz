@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import type { BoardTemplateData } from '@tapiz/board-commons';
+import { templatePreview, type BoardTemplateData } from '@tapiz/board-commons';
 import { db } from './init-db.js';
 import * as schema from '../schema.js';
 import type { TeamRole } from '../schema.js';
@@ -23,6 +23,7 @@ const summaryColumns = {
   nodeCount: schema.boardTemplates.nodeCount,
   width: schema.boardTemplates.width,
   height: schema.boardTemplates.height,
+  preview: schema.boardTemplates.preview,
   createdAt: schema.boardTemplates.createdAt,
   updatedAt: schema.boardTemplates.updatedAt,
   teamName: schema.teams.name,
@@ -30,11 +31,12 @@ const summaryColumns = {
 
 /**
  * Personal templates plus those of the user's teams. `teamId` only narrows
- * that set, so passing another team's id returns nothing.
+ * that set, so passing another team's id returns nothing. With
+ * `withPreview: false` every `preview` is null.
  */
 export async function listTemplatesForUser(
   userId: string,
-  options: { teamId?: string } = {},
+  options: { teamId?: string; withPreview?: boolean } = {},
 ): Promise<TemplateSummaryRow[]> {
   const userTeams = db
     .select({ teamId: schema.teamMembers.teamId })
@@ -42,7 +44,15 @@ export async function listTemplatesForUser(
     .where(eq(schema.teamMembers.accountId, userId));
 
   return db
-    .select({ ...summaryColumns, memberRole: schema.teamMembers.role })
+    .select({
+      ...summaryColumns,
+      // previews can add up to ~15 KB a template; skip them when unused
+      preview:
+        options.withPreview === false
+          ? sql<null>`null`
+          : schema.boardTemplates.preview,
+      memberRole: schema.teamMembers.role,
+    })
     .from(schema.boardTemplates)
     .leftJoin(schema.teams, eq(schema.teams.id, schema.boardTemplates.teamId))
     .leftJoin(
@@ -149,6 +159,8 @@ export async function createTemplate(
         // rotated bounds can be fractional
         width: Math.ceil(input.data.size.width),
         height: Math.ceil(input.data.size.height),
+        // templates never change, so the list outline is computed once
+        preview: templatePreview(input.data),
       })
       .returning();
 

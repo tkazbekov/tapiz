@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { DrizzleQueryError } from 'drizzle-orm';
 import {
   boundsOfNodes,
+  BUILTIN_TEMPLATES,
   type CocomaterialApiListVectors,
   type CocomaterialApiVector,
   type CocomaterialTag,
@@ -47,7 +48,10 @@ import {
 import {
   deleteTemplateAsUser,
   getTemplateWithData,
-  listTemplates,
+  isBuiltinTemplateId,
+  listBuiltinTemplates,
+  listTemplateSummaries,
+  loadBuiltinTemplate,
   requireTemplate,
   saveTemplateFromBoard,
   TEMPLATE_QUOTAS,
@@ -129,7 +133,14 @@ const cocomaterialNodeSchema = z.object({
   rotation: z.number().default(0).describe('Node rotation in degrees'),
 });
 
-const templateIdSchema = z.uuid().describe('Saved template UUID');
+const BUILTIN_TEMPLATE_IDS = BUILTIN_TEMPLATES.map((it) => it.id).join(', ');
+
+// built-in ids never reach a uuid-typed query
+const templateIdSchema = z
+  .union([z.uuid(), z.string().regex(/^builtin:[a-z0-9-]{1,64}$/)])
+  .describe(
+    `Saved template UUID, or a built-in template id (${BUILTIN_TEMPLATE_IDS})`,
+  );
 const insertOriginSchema = z
   .object({ x: z.number(), y: z.number() })
   .optional()
@@ -172,11 +183,10 @@ const PRESET_TABLE = (Object.keys(TEXT_PRESETS) as TextPreset[])
   })
   .join('; ');
 
-const TEMPLATE_GUIDANCE =
-  'To reuse a finished layout, save it with save_board_as_template (nodeIds = the refs values create_layout returned, or omit them for the whole board) and place copies on any board with insert_template; list_templates and get_template show the personal and team templates the user can read. Inserted copies get fresh ids, notes owned by the API token user with votes and emojis cleared, and the same layer policies and placement as create_layout.';
+const TEMPLATE_GUIDANCE = `To reuse a finished layout, save it with save_board_as_template (nodeIds = the refs values create_layout returned, or omit them for the whole board) and place copies on any board with insert_template; list_templates and get_template show the built-in templates and the personal and team templates the user can read. Inserted copies get fresh ids, notes owned by the API token user with votes and emojis cleared, and the same layer policies and placement as create_layout. For a standard starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the built-in template; use create_layout only for custom or themed variants, other formats, or when you need cells with note slots (cells, freeSlots). Built-in ids: ${BUILTIN_TEMPLATE_IDS}. Their labels are ready to use, so relabelling is optional; to change one, call get_template with includeData: true to see each ref's type and text (the labels are its text nodes and panel texts), then patch the node refs[ref] from the insert_template result with apply_board_actions. Check the result with preview_board.`;
 
 const LAYOUT_GUIDANCE =
-  'For lanes, columns, kanban boards, grids, 2x2 quadrants and rings of cells (retrospectives, brainstorms, prioritisation matrices, starfish retros), call create_layout instead of hand-building panels: it sizes every panel around 300x300 note slots, keeps notes below the header band, never sets panel color, places the layout next to the existing content, chooses layers for the user, and returns freeSlots (top-left positions of empty note slots) for follow-up notes. For themed retros (a starfish, a sailboat, a movie night), use kind "radial" around a centre illustration, per-cell style (shapes, colours, borders, frameless lanes over art) and decorations with Cocomaterial art found with search_cocomaterial_vectors. Use lint_board to check hand-built layouts.';
+  'For lanes, columns, kanban boards, grids, 2x2 quadrants and rings of cells (custom retrospectives, brainstorms, prioritisation matrices), call create_layout instead of hand-building panels: it sizes every panel around 300x300 note slots, keeps notes below the header band, never sets panel color, places the layout next to the existing content, chooses layers for the user, and returns freeSlots (top-left positions of empty note slots) for follow-up notes. For a standard starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the built-in template; use create_layout only for custom or themed variants, other formats, or when you need cells with note slots (cells, freeSlots). For custom or themed retros (a movie night, a starfish around your own art), use kind "radial" around a centre illustration, per-cell style (shapes, colours, borders, frameless lanes over art) and decorations with Cocomaterial art found with search_cocomaterial_vectors. Use lint_board to check hand-built layouts.';
 
 const PREVIEW_GUIDANCE =
   'preview_board renders the board, a region or a set of nodes as a PNG image on the server, as the user would see it. Call it after creating or editing a layout, especially freeform or artistic ones (decorations, radial rings, hand-placed art), look at the image and iterate: move or resize what overlaps, is clipped or looks unbalanced, then preview again.';
@@ -212,12 +222,13 @@ const { NOTE, SLOT_GAP, PAD } = LAYOUT_SIZES;
 const SAVE_TEMPLATE_DESCRIPTION = [
   'Save nodes of a board as a reusable template, for the API token user (scope "personal", default) or for a team (scope "team": teamId, or else the board\'s team; the user must be a member of that team).',
   'nodeIds: pass the refs values create_layout returned, or node ids from get_board; omit nodeIds to save the whole board. With includeContained (default true) the nodes lying inside a selected panel or group come along. Unknown nodeIds fail the call.',
-  `Only panel, text, note, group, arrow, vector and image nodes are saved; other types (user, settings, timer, poll, …), other users' notes the user cannot read (while notes are hidden, or whose text its owner made private), and assets that only live on this board (data: URLs, uploads) are listed in dropped with a reason. Arrows attached to a node outside the selection keep their endpoints but lose that attachment (detachedArrows). Comments, votes, emojis and note owners are not kept. Template refs are usually the source node ids. Limits: ${TEMPLATE_LIMITS.maxNodes} nodes, ${TEMPLATE_QUOTAS.account} personal templates per account, ${TEMPLATE_QUOTAS.team} per team.`,
+  `Only panel, text, note, group, arrow, vector and image nodes are saved. Runtime nodes (user, settings, timer) are skipped silently; other types (poll, estimation, token, …), other users' notes the user cannot read (while notes are hidden, or whose text its owner made private), and assets that only live on this board (data: URLs, uploads) are listed in dropped with a reason. Arrows attached to a node outside the selection keep their endpoints but lose that attachment (detachedArrows). Comments, votes, emojis and note owners are not kept. Template refs are usually the source node ids. Limits: ${TEMPLATE_LIMITS.maxNodes} nodes, ${TEMPLATE_QUOTAS.account} personal templates per account, ${TEMPLATE_QUOTAS.team} per team.`,
   'Returns { template: { id, name, description, scope, nodeCount, width, height, createdBy, createdAt, updatedAt, canEdit }, dropped: [{ id, type, reason }], detachedArrows, lint }. Place it with insert_template.',
 ].join(' ');
 
 const INSERT_TEMPLATE_DESCRIPTION = [
-  'Insert a copy of a saved template (see list_templates) into a board, with fresh node ids. Arrows attached inside the template are re-pointed to the new nodes, notes are owned by the API token user with votes and emojis cleared.',
+  'Insert a copy of a saved or built-in template (see list_templates) into a board, with fresh node ids. Arrows attached inside the template are re-pointed to the new nodes, notes are owned by the API token user with votes and emojis cleared.',
+  `Built-in templates (${BUILTIN_TEMPLATE_IDS}) are the classic retros of the web template selector, the first choice for a standard retro of that kind. Their refs are positional (n0, n1, …) and their labels are ready to use; to relabel, call get_template with includeData: true to see each ref's type and text (the labels are its text nodes and panel texts), then patch refs[ref] with apply_board_actions, and check it with preview_board. Their headings are kept as they are, so raw_heading is not reported for them.`,
   'origin, placement, layer and dryRun work as in create_layout: without origin the copy goes 400px right of (or below) the existing content; layer "auto" (default) keeps the stored layers for board admins and puts everything on layer 0 for anyone else (layerCoerced: true); "asStored" is rejected for users who are not board admins. Inserting twice gives two independent copies.',
   'Returns { status: applied | dry_run | rejected, origin, bounds, nodeCount, layerCoerced, refs (template ref -> new node id), lint, rejected, nodes (dry run only) }.',
 ].join(' ');
@@ -230,7 +241,7 @@ const CREATE_LAYOUT_DESCRIPTION = [
   'origin is the board position of the layout\'s top-left; without it the layout goes 400px right of (placement "right") or below (placement "below") the existing content. layer "auto" (default): board admins get the panels, texts and decorations on layer 1, with the panels inserted behind existing notes, anyone else gets everything on layer 0 (layerCoerced: true); "asStored" keeps them on layer 1 and is rejected for users who are not board admins. dryRun: true writes nothing and reports where every node would go.',
   "Returns { status: applied | dry_run | rejected, origin, bounds, nodeCount, layerCoerced, refs (template ref -> node id), lint (advisory issues), rejected, nodes (dry run only), cells: [{ ref, title, panelId, bounds, noteIds, freeSlots }] } in board coordinates. To add notes later, put 300x300 notes at a cell's freeSlots positions (top-left corners) on layer 0 with apply_board_actions. Check the result with preview_board.",
   'Example, a 3-column retro: { "boardId": "…", "layout": { "kind": "columns", "title": "Sprint 42 retro", "cells": [ { "title": "Went well", "notes": ["Pairing on the API", "Fast reviews"] }, { "title": "To improve", "notes": ["Flaky e2e tests", "Late scope changes"] }, { "title": "Actions", "subtitle": "Owner and date", "notes": ["Fix the e2e flakes", "Freeze scope on Wednesday"] } ] } }.',
-  `Example, a starfish retro around Cocomaterial art: { "boardId": "…", "layout": ${JSON.stringify(LAYOUT_EXAMPLES.starfish)} }.`,
+  `Example, a custom starfish retro around Cocomaterial art: { "boardId": "…", "layout": ${JSON.stringify(LAYOUT_EXAMPLES.starfish)} }.`,
   `Text presets used for headers, for hand-built text too: ${PRESET_TABLE}. Markup example: ${PRESET_EXAMPLE}.`,
 ].join(' ');
 
@@ -533,8 +544,7 @@ export async function readBoardAsMcpUser(
     throw new Error('Unable to read board with this API token');
   }
 
-  const nodes =
-    server.getBoard(boardId) ?? (await db.board.getBoard(boardId))?.board ?? [];
+  const nodes = (await server.readBoard(boardId)) ?? [];
   const settings = nodes.find(isSettings)?.content;
   const isAdmin = (await db.board.getBoardAdmins(boardId)).includes(user.id);
   const visible = maskNodesForViewer(nodes, user.id);
@@ -1182,7 +1192,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'List templates',
       description:
-        'List the saved templates the API token user can read: their personal templates and the templates of their teams, newest first. Returns { templates: [{ id, name, description, scope: { kind: personal } | { kind: team, teamId, teamName }, nodeCount, width, height, createdBy, createdAt, updatedAt, canEdit }] }. canEdit means the user may delete it. Place one with insert_template.',
+        'List the templates the API token user can read: first the built-in templates (scope { kind: builtin }, id builtin:<slug>, read-only, createdBy/createdAt/updatedAt null), then their personal templates and the templates of their teams, newest first. Returns { templates: [{ id, name, description, scope: { kind: builtin } | { kind: personal } | { kind: team, teamId, teamName }, nodeCount, width, height, createdBy, createdAt, updatedAt, canEdit }] }. canEdit means the user may delete it. To see what a template holds, call get_template with includeData: true, or insert it with dryRun and look at it with preview_board. Place one with insert_template.',
       inputSchema: z.object({}),
       annotations: {
         title: 'List templates',
@@ -1193,7 +1203,13 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
       },
     },
     hideQueryDetails(async () => {
-      return textResult({ templates: await listTemplates(user.id) });
+      const [builtins, saved] = await Promise.all([
+        listBuiltinTemplates(),
+        // no thumbnail outlines: they would only fill the context
+        listTemplateSummaries(user.id),
+      ]);
+
+      return textResult({ templates: [...builtins, ...saved] });
     }),
   );
 
@@ -1202,7 +1218,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Get template',
       description:
-        'Read one saved template the API token user can read. Returns { template } with the fields of list_templates; with includeData, template.data is { version, size, nodes: [{ ref, type, content }] }, positions relative to the template top-left. A template the user cannot read is reported as not found.',
+        'Read one built-in (builtin:<slug>) or saved template the API token user can read. Returns { template } with the fields of list_templates; with includeData, template.data is { version, size, nodes: [{ ref, type, content }] }, positions relative to the template top-left. A template the user cannot read is reported as not found.',
       inputSchema: z.object({
         templateId: templateIdSchema,
         includeData: z
@@ -1219,10 +1235,12 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
       },
     },
     hideQueryDetails(async ({ templateId, includeData }) => {
-      const { data, ...template } = await getTemplateWithData(
-        templateId,
-        user.id,
-      );
+      const { data, ...template } = isBuiltinTemplateId(templateId)
+        ? await loadBuiltinTemplate(templateId).then((it) => ({
+            ...it.template,
+            data: it.data,
+          }))
+        : await getTemplateWithData(templateId, user.id);
 
       return textResult({
         template: includeData ? { ...template, data } : template,
@@ -1309,16 +1327,26 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     },
     hideQueryDetails(
       async ({ boardId, templateId, origin, placement, layer, dryRun }) => {
-        const template = await requireTemplate(templateId, user.id, 'read');
+        const builtin = isBuiltinTemplateId(templateId);
+        const { data } = builtin
+          ? await loadBuiltinTemplate(templateId)
+          : await requireTemplate(templateId, user.id, 'read');
+        const result = await insertTemplateAsMcpUser(
+          boardServer,
+          user,
+          boardId,
+          data,
+          { origin, placement, layer, dryRun },
+        );
 
         return textResult(
-          await insertTemplateAsMcpUser(
-            boardServer,
-            user,
-            boardId,
-            template.data,
-            { origin, placement, layer, dryRun },
-          ),
+          builtin
+            ? {
+                ...result,
+                // built-in content is kept as it ships, headings included
+                lint: result.lint.filter((it) => it.code !== 'raw_heading'),
+              }
+            : result,
         );
       },
     ),
@@ -1329,7 +1357,7 @@ export function createTapizMcpServer(boardServer: Server, user: McpUser) {
     {
       title: 'Delete template',
       description:
-        'Delete a saved template for good. Personal templates can be deleted by their owner, team templates by team admins and by the member who saved them. Boards the template was inserted into keep their copies. Returns { success: true }.',
+        'Delete a saved template for good; built-in templates cannot be deleted. Personal templates can be deleted by their owner, team templates by team admins and by the member who saved them. Boards the template was inserted into keep their copies. Returns { success: true }.',
       inputSchema: z.object({ templateId: templateIdSchema }),
       annotations: {
         title: 'Delete template',

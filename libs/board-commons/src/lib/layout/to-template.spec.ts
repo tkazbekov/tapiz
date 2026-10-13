@@ -132,7 +132,7 @@ describe('templateFromNodes', () => {
     expect(parseBoardTemplate(data).ok).toBe(true);
   });
 
-  it('drops disallowed types, masked notes and board-scoped assets', () => {
+  it('drops disallowed types, masked notes and board-scoped assets, and skips runtime nodes', () => {
     const { data, dropped } = templateFromNodes(
       [
         panel,
@@ -140,6 +140,8 @@ describe('templateFromNodes', () => {
         note('theirs', 600, 'them'),
         { id: 'poll', type: 'poll', content: { position: { x: 0, y: 0 } } },
         { id: 'u', type: 'user', content: {} },
+        { id: 's', type: 'settings', content: {} },
+        { id: 't', type: 'timer', content: {} },
         asset('upload', 'image', 'a1b2c3.png'),
         asset('data-vector', 'vector', 'data:image/svg+xml;base64,PHN2Zz4='),
         asset('relative-vector', 'vector', 'assets/x.svg'),
@@ -161,7 +163,6 @@ describe('templateFromNodes', () => {
     expect(dropped).toEqual([
       { id: 'theirs', type: 'note', reason: 'masked_note' },
       { id: 'poll', type: 'poll', reason: 'type_not_allowed' },
-      { id: 'u', type: 'user', reason: 'type_not_allowed' },
       { id: 'upload', type: 'image', reason: 'board_scoped_asset' },
       { id: 'data-vector', type: 'vector', reason: 'board_scoped_asset' },
       { id: 'relative-vector', type: 'vector', reason: 'board_scoped_asset' },

@@ -200,10 +200,7 @@ export async function insertTemplateAsMcpUser(
     }
 
     const isAdmin = (await db.board.getBoardAdmins(boardId)).includes(user.id);
-    const existing =
-      server.getBoard(boardId) ??
-      (await db.board.getBoard(boardId))?.board ??
-      [];
+    const existing = (await server.readBoard(boardId)) ?? [];
     const plan = planInsert(user, existing, isAdmin, template, options);
 
     if (!plan.ok) {

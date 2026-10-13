@@ -15,10 +15,7 @@ import {
   catchError,
   filter,
   firstValueFrom,
-  from,
-  map,
   merge,
-  mergeMap,
   of,
   switchMap,
 } from 'rxjs';
@@ -37,10 +34,6 @@ export interface SavedTemplateGroup {
   title: string;
   templates: TemplateSummary[];
 }
-
-// thumbnails need each template's data: fetch a few at a time so the
-// batched GET stays short however many templates there are
-const THUMBNAIL_CONCURRENCY = 6;
 
 @Component({
   selector: 'tapiz-saved-templates',
@@ -129,7 +122,17 @@ export class SavedTemplatesComponent {
   selected = output();
 
   templates = signal<TemplateSummary[]>([]);
-  thumbnails = signal<Partial<Record<string, Thumbnail | 'failed'>>>({});
+  // drawn from the outline each listed template carries: no request per card
+  thumbnails = computed((): Partial<Record<string, Thumbnail | 'failed'>> =>
+    Object.fromEntries(
+      this.templates().map((template): [string, Thumbnail | 'failed'] => [
+        template.id,
+        template.preview?.length
+          ? templateThumbnail(template.preview, template)
+          : 'failed',
+      ]),
+    ),
+  );
   loaded = signal(false);
   failed = signal(false);
   busy = this.#templateInsert.busy;
@@ -178,32 +181,12 @@ export class SavedTemplatesComponent {
             }),
           ),
         ),
-        switchMap((templates) => {
-          this.templates.set(templates);
-          this.loaded.set(true);
-          this.failed.set(false);
-
-          const known = this.thumbnails();
-
-          return from(templates.filter(({ id }) => !known[id])).pipe(
-            mergeMap(
-              ({ id }) =>
-                this.#templateApi.get(id).pipe(
-                  map(({ data }) => templateThumbnail(data)),
-                  catchError(() => of('failed' as const)),
-                  map((thumbnail) => ({ id, thumbnail })),
-                ),
-              THUMBNAIL_CONCURRENCY,
-            ),
-          );
-        }),
         takeUntilDestroyed(this.#destroyRef),
       )
-      .subscribe(({ id, thumbnail }) => {
-        this.thumbnails.update((thumbnails) => ({
-          ...thumbnails,
-          [id]: thumbnail,
-        }));
+      .subscribe((templates) => {
+        this.templates.set(templates);
+        this.loaded.set(true);
+        this.failed.set(false);
       });
   }
 

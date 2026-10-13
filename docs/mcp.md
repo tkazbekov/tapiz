@@ -204,11 +204,13 @@ See [Templates](#templates) for scopes, access and results.
 
 `list_templates`
 
-Read-only. Lists the personal and team templates the token user can read.
+Read-only. Lists the built-in templates first, then the personal and team
+templates the token user can read. No thumbnail outlines.
 
 `get_template`
 
-Read-only. Reads one template; `includeData: true` adds its nodes.
+Read-only. Reads one template, built-in or saved; `includeData: true` adds its
+nodes.
 
 `save_board_as_template`
 
@@ -216,19 +218,24 @@ Saves nodes of a board (or the whole board) as a personal or team template.
 
 `insert_template`
 
-Inserts a copy of a template into a board, with fresh ids.
+Inserts a copy of a built-in or saved template into a board, with fresh ids.
 
 `delete_template`
 
-Deletes a template. Boards it was inserted into keep their copies.
+Deletes a saved template. Boards it was inserted into keep their copies.
+Built-in templates cannot be deleted.
 
 ## Layouts
 
 `create_layout` turns a short spec into panels, header text and notes, sized
 around Tapiz's real `300x300` note, and inserts them in one batch. Use it
-for retrospectives, kanban lanes, brainstorm grids and 2x2 matrices instead of
-hand-building panels with `apply_board_actions`. For themed retrospectives
-(a starfish, a sailboat, a movie night), arrange the cells in a ring with
+for custom retrospectives, kanban lanes, brainstorm grids and 2x2 matrices
+instead of hand-building panels with `apply_board_actions`. For a standard
+starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the
+[built-in template](#built-in-templates) instead; use `create_layout` for
+custom or themed variants, other formats, or when you need cells with note
+slots (`cells`, `freeSlots`). For themed retrospectives (a movie night, a
+starfish around your own art), arrange the cells in a ring with
 `radial`, give them a [style](#cell-style) and add
 [decorations](#decorations), then check the result with
 [`preview_board`](#board-preview).
@@ -321,7 +328,7 @@ Example, a 3-column retro:
 }
 ```
 
-Example, a starfish retro around Cocomaterial art:
+Example, a custom starfish retro around Cocomaterial art:
 
 ```json
 {
@@ -629,10 +636,33 @@ the user can edit. The web app and MCP share the code in
 - `team`: every team member can read and insert it; team admins and the member
   who saved it can delete it. A member who leaves the team loses access.
 - A template the user cannot read is reported as `Template not found`, so its
-  existence is not revealed. A `templateId` that is not a UUID fails input
-  validation instead.
+  existence is not revealed. A `templateId` that is neither a UUID nor a
+  `builtin:<slug>` id fails input validation instead.
 - Quotas: 200 personal templates per account, 500 per team. A template holds
   at most 500 nodes and 512 KB.
+
+### Built-in templates
+
+The four classic retros of the web template selector are available to every
+user, read-only, as `builtin:stop-start-continue`, `builtin:sailboat`,
+`builtin:mad-sad-glad` and `builtin:starfish`. Their data lives in
+`libs/board-commons/src/lib/layout/builtins/` and never touches the database.
+
+- `list_templates` lists them first, with `scope: { kind: 'builtin' }`,
+  `canEdit: false` and `createdBy`, `createdAt` and `updatedAt` set to `null`.
+- `get_template` and `insert_template` accept their ids; an unknown
+  `builtin:` id is `Template not found`.
+- `delete_template` refuses them with `Built-in templates cannot be deleted`.
+- Their headings are kept as they ship, so an insert does not report
+  `raw_heading` lint issues for them.
+
+For a standard retro of one of these kinds, insert the built-in template
+rather than building it with `create_layout`. Its labels are ready to use, so
+relabelling is optional. Built-in refs are positional (`n0`, `n1`, …): to
+change a label, call `get_template` with `includeData: true` to see each ref's
+type and text (the labels are its text nodes and panel texts), then patch the
+node `refs[ref]` from the `insert_template` result with `apply_board_actions`.
+Check the result with `preview_board`.
 
 ### Saving
 
@@ -660,9 +690,10 @@ save_board_as_template({
 - Team scope needs team membership, even for a board admin; `teamId` with
   `scope: 'personal'` is an error.
 - Only `panel`, `text`, `note`, `group`, `arrow`, `vector` and `image` nodes
-  are saved. Everything else is listed in `dropped`:
-  - `type_not_allowed`: user, settings, timer, poll, estimation and other
-    runtime nodes;
+  are saved. Runtime nodes (`user`, `settings`, `timer`) are skipped without
+  a word. Everything else is listed in `dropped`:
+  - `type_not_allowed`: poll, estimation, token and other content a template
+    cannot hold;
   - `masked_note`: another user's note the token user cannot read: notes
     are hidden on the board, or the note's text is private (its
     `textHidden`, or else its owner's hidden-text setting);
@@ -677,9 +708,20 @@ save_board_as_template({
 `{ id, name, description, scope, nodeCount, width, height, createdBy, createdAt, updatedAt, canEdit }`,
 with `scope` either `{ kind: 'personal' }` or
 `{ kind: 'team', teamId, teamName }`. `canEdit` means the user may delete it.
-`list_templates` returns `{ templates: TemplateSummary[] }`, newest first, and
-`get_template` returns `{ template }`, with `data: { version, size, nodes }`
-when `includeData` is true.
+`list_templates` returns `{ templates: TemplateSummary[] }`: the built-in
+templates first, then the saved ones, newest first. `get_template` returns
+`{ template }`, with `data: { version, size, nodes }` when `includeData` is
+true.
+
+The tRPC `template.list` used by the web template selector also returns a
+`preview` per saved template, for its thumbnails: a rough outline of up to 200
+shapes `{ type, x, y, width, height, fill? }` in template coordinates (the
+largest ones are kept), or `null` when the data could not be read. For an
+arrow, `(x, y)` is its start and `(x + width, y + height)` its end, so its
+width and height can be negative; `fill` is a note's own colour. Templates
+never change, so the preview is computed once when the template is saved and
+stored in the `preview` column; the list never reads the template data. MCP
+leaves it out.
 
 ### Inserting
 
@@ -779,7 +821,7 @@ Reuse a layout on other boards:
 1. Call `create_layout` on a scratch board, and adjust it until it looks right.
 2. Call `save_board_as_template` with the layout's `refs` values as `nodeIds`
    (or no `nodeIds` for the whole board), and `scope: 'team'` to share it.
-3. Later, call `list_templates` to find it.
+3. Later, call `list_templates` to find it (built-in retros come first).
 4. Call `insert_template` with the target `boardId`; try `dryRun: true` first
    to see where it lands.
 

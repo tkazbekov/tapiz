@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import {
   TEMPLATE_LIMITS,
+  findBuiltinTemplate,
+  BUILTIN_TEMPLATES,
   isNote,
   isNoteMaskedFor,
   isUserNode,
@@ -14,6 +16,7 @@ import {
   type DroppedNode,
   type LintIssue,
   type TemplateIssue,
+  type TemplatePreviewRect,
   type TuNode,
 } from '@tapiz/board-commons';
 import { sanitizeNodeRichText } from '@tapiz/board-commons/rich-text/rich-text-sanitizer.js';
@@ -78,7 +81,30 @@ export interface TemplateSummary {
   canEdit: boolean;
 }
 
+// a listed template, with an outline for thumbnails (null: unreadable data)
+export type ListedTemplate = TemplateSummary & {
+  preview: TemplatePreviewRect[] | null;
+};
+
 export type TemplateWithData = TemplateSummary & { data: BoardTemplateData };
+
+/**
+ * A template that ships with Tapiz (BUILTIN_TEMPLATES): everyone can read
+ * it, nobody can change or delete it, and it never touches the database.
+ */
+export interface BuiltinTemplateSummary {
+  id: `builtin:${string}`;
+  name: string;
+  description: string;
+  scope: { kind: 'builtin' };
+  nodeCount: number;
+  width: number;
+  height: number;
+  createdBy: null;
+  createdAt: null;
+  updatedAt: null;
+  canEdit: false;
+}
 
 // a template read for a user: `data` has been parsed
 export type LoadedTemplate = TemplateRow & {
@@ -149,10 +175,10 @@ export function toSummary(
   };
 }
 
-export async function listTemplates(
+async function listReadableTemplates(
   userId: string,
-  options: { teamId?: string } = {},
-): Promise<TemplateSummary[]> {
+  options: { teamId?: string; withPreview: boolean },
+) {
   if (options.teamId && !isUuid(options.teamId)) {
     return [];
   }
@@ -162,8 +188,84 @@ export async function listTemplates(
   return rows.flatMap((row: TemplateSummaryRow) => {
     const access = accessFor(row, userId, row.memberRole);
 
-    return access === 'none' ? [] : [toSummary(row, access)];
+    return access === 'none' ? [] : [{ row, access }];
   });
+}
+
+/**
+ * The templates the user can read, each with the preview stored when it was
+ * saved (templates never change). Quotas allow 200 personal templates plus
+ * 500 per team, so only the small stored outline is read, never `data`.
+ */
+export async function listTemplates(
+  userId: string,
+  options: { teamId?: string } = {},
+): Promise<ListedTemplate[]> {
+  const readable = await listReadableTemplates(userId, {
+    ...options,
+    withPreview: true,
+  });
+
+  return readable.map(({ row, access }) => ({
+    ...toSummary(row, access),
+    preview: row.preview ?? null,
+  }));
+}
+
+/** listTemplates without the previews, for callers that draw nothing. */
+export async function listTemplateSummaries(
+  userId: string,
+  options: { teamId?: string } = {},
+): Promise<TemplateSummary[]> {
+  const readable = await listReadableTemplates(userId, {
+    ...options,
+    withPreview: false,
+  });
+
+  return readable.map(({ row, access }) => toSummary(row, access));
+}
+
+export const isBuiltinTemplateId = (id: string) => id.startsWith('builtin:');
+
+/** A built-in template and its data; unknown ids are not found. */
+export async function loadBuiltinTemplate(id: string): Promise<{
+  template: BuiltinTemplateSummary;
+  data: BoardTemplateData;
+}> {
+  const builtin = findBuiltinTemplate(id);
+
+  if (!builtin) {
+    throw templateNotFound();
+  }
+
+  const data = await builtin.load();
+
+  return {
+    template: {
+      id: builtin.id,
+      name: builtin.name,
+      description: builtin.description,
+      scope: { kind: 'builtin' },
+      nodeCount: data.nodes.length,
+      width: Math.ceil(data.size.width),
+      height: Math.ceil(data.size.height),
+      createdBy: null,
+      createdAt: null,
+      updatedAt: null,
+      canEdit: false,
+    },
+    data,
+  };
+}
+
+export async function listBuiltinTemplates(): Promise<
+  BuiltinTemplateSummary[]
+> {
+  return Promise.all(
+    BUILTIN_TEMPLATES.map(
+      async ({ id }) => (await loadBuiltinTemplate(id)).template,
+    ),
+  );
 }
 
 /**
@@ -236,6 +338,16 @@ export async function getTemplateWithData(
 
 // no parsing: a template whose data no longer parses can still be removed
 export async function deleteTemplateAsUser(templateId: string, userId: string) {
+  if (isBuiltinTemplateId(templateId)) {
+    throw findBuiltinTemplate(templateId)
+      ? new TemplateError(
+          'FORBIDDEN',
+          'template_read_only',
+          'Built-in templates cannot be deleted',
+        )
+      : templateNotFound();
+  }
+
   await requireTemplateAccess(templateId, userId, 'write');
   await db.template.deleteTemplate(templateId);
 }
@@ -446,9 +558,9 @@ export async function saveTemplateFromBoard(
 
   // the live board is newer than the stored one
   const nodes =
-    server?.getBoard(boardId) ??
-    (await db.board.getBoard(boardId))?.board ??
-    [];
+    (server
+      ? await server.readBoard(boardId)
+      : (await db.board.getBoard(boardId))?.board) ?? [];
   const selection = selectTemplateNodes(
     nodes,
     input.nodeIds,

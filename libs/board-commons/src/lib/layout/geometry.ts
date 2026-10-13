@@ -11,7 +11,11 @@ export interface Rect {
 export type Placement = 'right' | 'below';
 
 // runtime nodes that are not drawn on the board
-const NON_BOARD_TYPES = new Set(['user', 'settings', 'timer']);
+export const RUNTIME_NODE_TYPES: ReadonlySet<string> = new Set([
+  'user',
+  'settings',
+  'timer',
+]);
 
 const DEFAULT_WIDTHS: Record<string, number> = {
   poll: 650,
@@ -152,7 +156,7 @@ export function resolveArrowGeometry(
 export function nodeBounds(node: TuNode, byId?: NodesById): Rect | null {
   const { position, rotation } = contentOf(node);
 
-  if (NON_BOARD_TYPES.has(node.type) || !isPoint(position)) {
+  if (RUNTIME_NODE_TYPES.has(node.type) || !isPoint(position)) {
     return null;
   }
 

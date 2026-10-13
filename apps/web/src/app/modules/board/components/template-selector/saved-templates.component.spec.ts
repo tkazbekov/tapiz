@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { Subject, of, throwError } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BoardTemplateData, templatePreview } from '@tapiz/board-commons';
 import {
   TemplateApiService,
   TemplateSummary,
@@ -15,6 +16,9 @@ import {
   provideInsertMocks,
 } from './template-insert.testing';
 import { templateThumbnail } from './template-thumbnail';
+
+const thumbnailOf = (data: BoardTemplateData) =>
+  templateThumbnail(templatePreview(data) ?? [], data.size);
 
 const summary = (
   id: string,
@@ -33,6 +37,7 @@ const summary = (
   createdAt: '2026-10-13T00:00:00.000Z',
   updatedAt: '2026-10-13T00:00:00.000Z',
   canEdit,
+  preview: templatePreview(lanesTemplate),
 });
 
 const templates = [
@@ -115,13 +120,15 @@ describe('SavedTemplatesComponent', () => {
     expect(el.querySelectorAll('.delete')).toHaveLength(1);
   });
 
-  it('draws a thumbnail from the node rects', async () => {
+  it('draws the thumbnails from the listed previews, without a get per card', async () => {
     const fixture = await render();
-    const svg = (fixture.nativeElement as HTMLElement).querySelector('svg');
+    const svgs = (fixture.nativeElement as HTMLElement).querySelectorAll('svg');
 
-    expect(svg?.getAttribute('viewBox')).toBe('0 0 1400 1000');
-    expect(svg?.querySelectorAll('rect.panel')).toHaveLength(3);
-    expect(svg?.querySelectorAll('rect.note')).toHaveLength(1);
+    expect(svgs).toHaveLength(2);
+    expect(svgs[0].getAttribute('viewBox')).toBe('0 0 1400 1000');
+    expect(svgs[0].querySelectorAll('rect.panel')).toHaveLength(3);
+    expect(svgs[0].querySelectorAll('rect.note')).toHaveLength(1);
+    expect(api.get).not.toHaveBeenCalled();
   });
 
   it('inserts a template as one batch and emits selected', async () => {
@@ -170,50 +177,34 @@ describe('SavedTemplatesComponent', () => {
     expect(el.querySelector('.hint')).toBeNull();
   });
 
-  it('marks a thumbnail that could not be loaded', async () => {
-    api.get.mockImplementation((id: string) =>
-      id === 't-team'
-        ? throwError(() => new Error('Not found'))
-        : of({ ...templates[1], data: lanesTemplate }),
+  it('marks a template without a preview', async () => {
+    api.list.mockReturnValueOnce(
+      of([
+        { ...templates[0], preview: null },
+        { ...templates[1], preview: [] },
+        summary('t-other', 'Other lanes', { kind: 'personal' }),
+      ]),
     );
     const fixture = await render();
     const cards = (fixture.nativeElement as HTMLElement).querySelectorAll(
       '.card',
     );
 
-    expect(cards[0].querySelector('svg')).not.toBeNull();
-    expect(cards[1].querySelector('.no-preview')?.textContent).toBe(
+    // my templates first: the empty preview, then a drawn one; the team's
+    // null preview last
+    expect(cards[0].querySelector('.no-preview')?.textContent).toBe(
+      'No preview',
+    );
+    expect(cards[1].querySelector('svg')).not.toBeNull();
+    expect(cards[2].querySelector('.no-preview')?.textContent).toBe(
       'No preview',
     );
   });
 
-  it('loads a few thumbnails at a time', async () => {
-    const many = Array.from({ length: 20 }, (_, index) =>
-      summary(`t-${index}`, `Lanes ${index}`, { kind: 'personal' }),
-    );
-    const pending: Subject<unknown>[] = [];
-    api.list.mockReturnValueOnce(of(many));
-    api.get.mockImplementation(() => {
-      const response = new Subject<unknown>();
-      pending.push(response);
-      return response;
-    });
-
-    await render();
-
-    expect(api.get).toHaveBeenCalledTimes(6);
-
-    pending[0].next({ ...many[0], data: lanesTemplate });
-    pending[0].complete();
-
-    expect(api.get).toHaveBeenCalledTimes(7);
-  });
-
-  it('lists again after a template is saved, keeping loaded thumbnails', async () => {
+  it('lists again after a template is saved', async () => {
     const fixture = await render();
     const saved = summary('t-new', 'New lanes', { kind: 'personal' });
     api.list.mockReturnValueOnce(of([saved, ...templates]));
-    api.get.mockClear();
 
     api.changed.next();
     await fixture.whenStable();
@@ -223,7 +214,10 @@ describe('SavedTemplatesComponent', () => {
         ...(fixture.nativeElement as HTMLElement).querySelectorAll('.insert p'),
       ].map((it) => it.textContent?.trim()),
     ).toEqual(['New lanes', 'My lanes', 'Team lanes']);
-    expect(api.get.mock.calls).toEqual([['t-new']]);
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('svg'),
+    ).toHaveLength(3);
+    expect(api.get).not.toHaveBeenCalled();
   });
 
   it('blocks inserts while another one loads', async () => {
@@ -276,7 +270,7 @@ describe('SavedTemplatesComponent', () => {
 
 describe('templateThumbnail', () => {
   it('outlines panels, fills notes and draws text as bars', () => {
-    const thumbnail = templateThumbnail({
+    const thumbnail = thumbnailOf({
       version: 1,
       size: { width: 3000, height: 1800 },
       nodes: [
@@ -323,7 +317,7 @@ describe('templateThumbnail', () => {
         ownerId: '',
       },
     });
-    const thumbnail = templateThumbnail({
+    const thumbnail = thumbnailOf({
       version: 1,
       size: { width: 1000, height: 1000 },
       nodes: [
@@ -354,7 +348,7 @@ describe('templateThumbnail', () => {
   });
 
   it('keeps the stored points of a free arrow', () => {
-    const thumbnail = templateThumbnail({
+    const thumbnail = thumbnailOf({
       version: 1,
       size: { width: 500, height: 500 },
       nodes: [

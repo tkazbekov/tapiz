@@ -1,6 +1,11 @@
 import type { TuNode } from '../models/node.model.js';
 import type { Point } from '../models/point.model.js';
-import { boundsOfNodes, nodesById, resolveArrowGeometry } from './geometry.js';
+import {
+  RUNTIME_NODE_TYPES,
+  boundsOfNodes,
+  nodesById,
+  resolveArrowGeometry,
+} from './geometry.js';
 import {
   PORTABLE_URL_PATTERN,
   TEMPLATE_NODE_TYPES,
@@ -105,7 +110,13 @@ export function templateFromNodes(
     .map((it) => it.node);
 
   const dropped: DroppedNode[] = [];
+  // runtime nodes (users, settings, timers) are never content: skipped
+  // without a word, so dropped only lists what the user may expect saved
   const kept = sorted.filter((node) => {
+    if (RUNTIME_NODE_TYPES.has(node.type)) {
+      return false;
+    }
+
     const reason = dropReason(node, options.isMasked);
 
     if (reason) {

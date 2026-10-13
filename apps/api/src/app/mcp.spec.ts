@@ -81,6 +81,19 @@ describe('mcp', () => {
     expect(TAPIZ_MCP_INSTRUCTIONS).toContain('verify it in the web app');
   });
 
+  it('tells the LLM when to use a built-in retro and how to relabel it', () => {
+    const route =
+      'For a standard starfish, sailboat, mad-sad-glad or stop-start-continue retro, insert the built-in template; use create_layout only for custom or themed variants';
+
+    // the same decision in the template and the layout guidance
+    expect(TAPIZ_MCP_INSTRUCTIONS.split(route)).toHaveLength(3);
+    expect(TAPIZ_MCP_INSTRUCTIONS).not.toContain('starfish retros), call');
+    expect(TAPIZ_MCP_INSTRUCTIONS).toContain('relabelling is optional');
+    expect(TAPIZ_MCP_INSTRUCTIONS).toContain(
+      'call get_template with includeData: true to see each ref',
+    );
+  });
+
   it('applies board actions through a realtime client', async () => {
     const server = new Server({
       to: () => ({
@@ -1125,6 +1138,10 @@ describe('mcp', () => {
         expect(listed.templates).toContainEqual(
           expect.objectContaining({ id: templateId, name: 'Start stop' }),
         );
+        // thumbnail outlines are for the web app, they would fill the context
+        listed.templates.forEach((it: object) =>
+          expect(it).not.toHaveProperty('preview'),
+        );
 
         const summary = await callToolAs(server, admin, 'get_template', {
           templateId,
@@ -1299,6 +1316,97 @@ describe('mcp', () => {
         expect(
           await db.board.getBoardUser(foreign.id, owner.id),
         ).toBeUndefined();
+      });
+
+      it('lists, reads and inserts the built-in templates', async () => {
+        const server = newServer();
+        const owner = mcpUser(1);
+        const listed = (await callToolAs(server, owner, 'list_templates', {}))
+          .templates as {
+          id: string;
+          scope: { kind: string };
+          canEdit: boolean;
+          nodeCount: number;
+        }[];
+        const builtins = listed.filter((it) => it.scope.kind === 'builtin');
+
+        // first in the list
+        expect(listed.slice(0, 4)).toEqual(builtins);
+        expect(builtins.map((it) => it.id)).toEqual([
+          'builtin:stop-start-continue',
+          'builtin:sailboat',
+          'builtin:mad-sad-glad',
+          'builtin:starfish',
+        ]);
+        builtins.forEach((it) => {
+          expect(it.canEdit).toBe(false);
+          expect(it.nodeCount).toBeGreaterThan(0);
+          expect(it).not.toHaveProperty('preview');
+        });
+
+        const starfish = builtins[3];
+        const read = await callToolAs(server, owner, 'get_template', {
+          templateId: 'builtin:starfish',
+          includeData: true,
+        });
+
+        expect(read.template).toMatchObject({
+          id: 'builtin:starfish',
+          name: 'Starfish',
+          scope: { kind: 'builtin' },
+          canEdit: false,
+          nodeCount: starfish.nodeCount,
+        });
+        expect(read.template.data.nodes).toHaveLength(starfish.nodeCount);
+
+        const board = await getUserCaller(1).board.create({
+          name: 'mcp builtin target',
+        });
+        const inserted = await callToolAs(server, owner, 'insert_template', {
+          boardId: board.id,
+          templateId: 'builtin:starfish',
+          origin: { x: 0, y: 0 },
+        });
+
+        expect(inserted.status).toBe('applied');
+        expect(Object.keys(inserted.refs)).toHaveLength(starfish.nodeCount);
+        // the built-in headings are kept as they ship
+        expect(
+          inserted.lint.filter(
+            (issue: { code: string }) => issue.code === 'raw_heading',
+          ),
+        ).toEqual([]);
+
+        const nodes = await persisted(board.id);
+        const ids = new Set(nodes.map((it) => it.id));
+
+        expect(
+          (Object.values(inserted.refs) as string[]).every((id) => ids.has(id)),
+        ).toBe(true);
+
+        await expect(
+          callToolAs(server, owner, 'delete_template', {
+            templateId: 'builtin:starfish',
+          }),
+        ).rejects.toThrow('Built-in templates cannot be deleted');
+
+        for (const [name, args] of [
+          ['get_template', { templateId: 'builtin:nope' }],
+          [
+            'insert_template',
+            { boardId: board.id, templateId: 'builtin:nope' },
+          ],
+          ['delete_template', { templateId: 'builtin:nope' }],
+        ] as const) {
+          await expect(callToolAs(server, owner, name, args)).rejects.toThrow(
+            'Template not found',
+          );
+        }
+
+        // anything else is neither a uuid nor a built-in id
+        await expect(
+          callToolAs(server, owner, 'get_template', { templateId: 'starfish' }),
+        ).rejects.toThrow();
       });
     });
 

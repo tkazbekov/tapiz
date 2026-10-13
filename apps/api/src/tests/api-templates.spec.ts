@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { TuNode } from '@tapiz/board-commons';
+import { templatePreview, type TuNode } from '@tapiz/board-commons';
 import { db as drizzleDb, startDB } from '../app/db/init-db';
 import db from '../app/db';
 import { boardTemplates } from '../app/schema';
@@ -138,7 +138,8 @@ const boardNodes = (): TuNode[] => [
   asset('vector-web', 'vector', 1500, 'https://example.com/v.svg'),
 ];
 
-// a valid template row, written straight to the table
+// a valid template row, written straight to the table, with the preview a
+// save would store
 const templateRow = (
   scope: { accountId: string } | { teamId: string },
   data: unknown = {
@@ -158,6 +159,7 @@ const templateRow = (
 ) => ({
   name: 'Seeded template',
   data: data as typeof boardTemplates.$inferInsert.data,
+  preview: templatePreview(data),
   nodeCount: 1,
   width: 300,
   height: 300,
@@ -278,7 +280,7 @@ describe('Api - templates', () => {
       expect(html).not.toContain('onerror');
     });
 
-    it('drops runtime nodes and board-scoped assets', async () => {
+    it('skips runtime nodes silently and drops board-scoped assets', async () => {
       const result = await save(OWNER, {
         nodeIds: [
           'settings',
@@ -292,20 +294,39 @@ describe('Api - templates', () => {
       });
 
       expect(result.template.nodeCount).toBe(2);
-      expect(result.dropped).toEqual(
-        expect.arrayContaining([
-          { id: 'settings', type: 'settings', reason: 'type_not_allowed' },
-          {
-            id: getAuth(OWNER).sub,
-            type: 'user',
-            reason: 'type_not_allowed',
-          },
-          { id: 'timer', type: 'timer', reason: 'type_not_allowed' },
-          { id: 'image-upload', type: 'image', reason: 'board_scoped_asset' },
-          { id: 'vector-data', type: 'vector', reason: 'board_scoped_asset' },
-        ]),
-      );
-      expect(result.dropped).toHaveLength(5);
+      // user, settings and timer are not content: not listed
+      expect(result.dropped).toEqual([
+        { id: 'image-upload', type: 'image', reason: 'board_scoped_asset' },
+        { id: 'vector-data', type: 'vector', reason: 'board_scoped_asset' },
+      ]);
+    });
+
+    it('still lists content types a template cannot hold', async () => {
+      const pollBoard = (
+        await db.board.createBoard(
+          'Templates poll board',
+          getAuth(OWNER).sub,
+          [
+            settings(),
+            panel('panel-p', 0, 0, 500),
+            {
+              id: 'poll-1',
+              type: 'poll',
+              content: { position: { x: 0, y: 0 }, layer: 0 },
+            },
+          ],
+          null,
+        )
+      ).id;
+      const result = await save(OWNER, {
+        boardId: pollBoard,
+        nodeIds: ['settings', 'panel-p', 'poll-1'],
+      });
+
+      expect(result.template.nodeCount).toBe(1);
+      expect(result.dropped).toEqual([
+        { id: 'poll-1', type: 'poll', reason: 'type_not_allowed' },
+      ]);
     });
 
     it('detaches arrows from nodes outside the selection', async () => {
@@ -826,10 +847,11 @@ describe('Api - templates', () => {
 
       const listed = await getUserCaller(OWNER).template.list();
 
-      for (const { id } of rows) {
-        // the list never reads the data
-        expect(listed.some((it) => it.id === id)).toBe(true);
+      // listed all the same; the preview of an unknown version is null
+      expect(listed.find((it) => it.id === rows[0].id)?.preview).toBeNull();
+      expect(listed.find((it) => it.id === rows[1].id)?.preview).toEqual([]);
 
+      for (const { id } of rows) {
         const owner = await errorCall(() =>
           getUserCaller(OWNER).template.get({ templateId: id }),
         );
@@ -844,6 +866,107 @@ describe('Api - templates', () => {
         expect(outsider?.code).toBe('NOT_FOUND');
       }
     });
+
+    it('lists the capped preview stored when the template was saved', async () => {
+      const saved = await save(OWNER, { name: 'Previewed' });
+      const nodes = Array.from({ length: 250 }, (_, index) => ({
+        ref: `n${index}`,
+        type: 'note',
+        content: {
+          ...note(`n${index}`, index * 10, 0, '').content,
+          votes: [],
+          color: '#fee2e2',
+        },
+      }));
+      const [big] = await drizzleDb
+        .insert(boardTemplates)
+        .values(
+          templateRow(
+            { accountId: getAuth(OWNER).sub },
+            { version: 1, size: { width: 2790, height: 300 }, nodes },
+          ),
+        )
+        .returning({ id: boardTemplates.id });
+
+      const [stored] = await drizzleDb
+        .select({ preview: boardTemplates.preview })
+        .from(boardTemplates)
+        .where(eq(boardTemplates.id, saved.template.id));
+
+      expect(stored.preview?.map((it) => it.type)).toEqual([
+        'panel',
+        'note',
+        'note',
+        'text',
+      ]);
+
+      const listed = await getUserCaller(OWNER).template.list();
+      const panelPreview = listed.find(
+        (it) => it.id === saved.template.id,
+      )?.preview;
+
+      // panel-1 and what lies inside it, relative to the template top-left
+      expect(panelPreview?.[0]).toEqual({
+        type: 'panel',
+        x: 0,
+        y: 0,
+        width: 1000,
+        height: 1000,
+      });
+      expect(panelPreview?.map((it) => it.type)).toEqual([
+        'panel',
+        'note',
+        'note',
+        'text',
+      ]);
+
+      const bigPreview = listed.find((it) => it.id === big.id)?.preview;
+
+      expect(bigPreview).toHaveLength(200);
+      expect(bigPreview?.[0]).toEqual({
+        type: 'note',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 300,
+        fill: '#fee2e2',
+      });
+    });
+
+    it('lists the stored preview without reading the data again', async () => {
+      const stored = [{ type: 'panel', x: 0, y: 0, width: 10, height: 10 }];
+      const [row] = await drizzleDb
+        .insert(boardTemplates)
+        .values({
+          ...templateRow({ accountId: getAuth(OWNER).sub }),
+          preview: stored,
+        })
+        .returning({ id: boardTemplates.id });
+
+      const listed = await getUserCaller(OWNER).template.list();
+
+      // the seeded data holds a note, the stored outline a panel
+      expect(listed.find((it) => it.id === row.id)?.preview).toEqual(stored);
+    });
+
+    it('rejects built-in template ids cleanly over tRPC', async () => {
+      // built-ins are read in the web app and over MCP; these routes only
+      // take uuids, so a built-in id never reaches a uuid query
+      const read = await errorCall(() =>
+        getUserCaller(OWNER).template.get({ templateId: 'builtin:starfish' }),
+      );
+
+      expect(read?.code).toBe('BAD_REQUEST');
+
+      const removed = await errorCall(() =>
+        getUserCaller(OWNER).template.delete({
+          templateId: 'builtin:starfish',
+        }),
+      );
+
+      expect(removed?.code).toBe('BAD_REQUEST');
+    });
+
     it('lets the owner delete a template that no longer parses', async () => {
       const corrupt = { version: 2, nodes: [] };
       const [personal, team] = await drizzleDb
