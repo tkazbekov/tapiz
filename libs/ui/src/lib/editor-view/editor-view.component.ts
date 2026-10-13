@@ -115,7 +115,10 @@ export class EditorViewComponent implements OnDestroy, AfterViewInit {
       const instance = this.editor();
 
       if (instance) {
-        instance.commands.setContent(this.content(), { emitUpdate: false });
+        instance.commands.setContent(this.content(), {
+          emitUpdate: false,
+          parseOptions: { preserveWhitespace: 'full' },
+        });
       }
     });
   }
@@ -152,6 +155,8 @@ export class EditorViewComponent implements OnDestroy, AfterViewInit {
 
     const editor = new Editor({
       element: this.editorRef().nativeElement,
+      // keep runs of spaces typed by the user when the content is parsed again
+      parseOptions: { preserveWhitespace: 'full' },
       editorProps: {
         attributes: {
           class: this.customClass(),

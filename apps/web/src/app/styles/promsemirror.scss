@@ -7,7 +7,9 @@
   outline: none;
   font-feature-settings: "liga" 0;
   font-variant-ligatures: none;
-  white-space-collapse: collapse !important;
+  // ProseMirror needs preserved spaces while editing (tiptap's own sheet
+  // sets break-spaces); rendered text uses the same to match the editor
+  white-space: break-spaces;
 
   p {
     margin-block-end: var(--size-1);

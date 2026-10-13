@@ -151,6 +151,8 @@ export class RichTextEditorComponent
   ngAfterViewInit() {
     const editor = new Editor({
       element: this.editorRef().nativeElement,
+      // keep runs of spaces typed by the user when the content is parsed again
+      parseOptions: { preserveWhitespace: 'full' },
       editable: !this.disabled(),
       editorProps: {
         attributes: {
@@ -205,7 +207,10 @@ export class RichTextEditorComponent
     }
 
     this.writingValue = true;
-    editor.commands.setContent(nextValue, { emitUpdate: false });
+    editor.commands.setContent(nextValue, {
+      emitUpdate: false,
+      parseOptions: { preserveWhitespace: 'full' },
+    });
     this.writingValue = false;
     this.bumpEditorState();
   }

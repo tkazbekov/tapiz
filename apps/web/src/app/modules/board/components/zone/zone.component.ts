@@ -13,7 +13,7 @@ import { ZoneService } from './zone.service';
   styleUrls: ['./zone.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    '[style.display]': 'areaSelector()',
+    '[style.display]': 'areaSelector() ? null : "none"',
     '[style.transform]': 'transform()',
     '[style.width.px]': 'width()',
     '[style.height.px]': 'height()',
