@@ -326,6 +326,8 @@ export class Server {
       delete this.state[boardId];
     }
 
+    delete this.boardSettings[boardId];
+
     if (this.stateSubscriptions[boardId]) {
       this.stateSubscriptions[boardId].unsubscribe();
       delete this.stateSubscriptions[boardId];
@@ -382,9 +384,9 @@ export class Server {
   public applyAction(boardId: string, actions: StateActions[]) {
     const newState = this.state[boardId].actions(actions);
 
-    const hasNewSettings = actions.some(
-      (it) => it.op === 'patch' && it.data.type === 'settings',
-    );
+    // the first settings node arrives as an add, so any settings action
+    // refreshes the cache
+    const hasNewSettings = actions.some((it) => it.data.type === 'settings');
 
     if (hasNewSettings) {
       const settings = this.findBoardSettings(boardId);

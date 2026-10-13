@@ -401,6 +401,66 @@ describe('ws', () => {
     tab.close();
   });
 
+  it('applies settings added after the board loaded', async () => {
+    const owner = await getUserCaller(22);
+    const board = await owner.board.create({ name: 'late settings' });
+    await owner.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+    const admin = await connect('tapiz_session=22');
+    const member = await connect('tapiz_session=23');
+    await sendFrom(admin, { action: 'join', boardId: board.id });
+    await sendFrom(member, { action: 'join', boardId: board.id });
+
+    // the board has no settings node yet, so this is the first one
+    await sendFrom(admin, [
+      {
+        op: 'add',
+        data: {
+          id: randomUUID(),
+          type: 'settings',
+          content: { readOnly: true },
+        },
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(
+        wsServer.getBoard(board.id)?.some((it) => it.type === 'settings'),
+      ).toEqual(true);
+    });
+
+    const noteId = randomUUID();
+
+    await sendFrom(member, [
+      {
+        op: 'add',
+        data: {
+          id: noteId,
+          type: 'note',
+          content: {
+            text: 'read only',
+            position: { x: 0, y: 0 },
+            layer: 0,
+            ownerId: getAuth(23).sub,
+            votes: [],
+            emojis: [],
+            drawing: [],
+            width: 240,
+            height: 160,
+            color: '#fee2e2',
+          },
+        },
+      },
+    ]);
+
+    expect(wsServer.getBoard(board.id)?.some((it) => it.id === noteId)).toEqual(
+      false,
+    );
+
+    admin.close();
+    member.close();
+  });
+
   it('removing an account revokes its single-member team boards', async () => {
     const owner = await getUserCaller(9);
     const team = await db.team.createTeam('solo team', getAuth(9).sub);
