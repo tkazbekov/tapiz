@@ -135,28 +135,34 @@ textarea {
   right: 10px;
   top: 10px;
   display: flex;
+  align-items: center;
   gap: 5px;
 }
 
 .vote {
   background-color: var(--white);
-  color: var(--gray-80);
-  width: 20px;
-  height: 20px;
-  line-height: 20px;
-  font-weight: bold;
-  border-radius: 10px;
+  color: var(--grey-90);
+  min-inline-size: 32px;
+  block-size: 32px;
+  padding-inline: var(--spacing-2);
+  border-radius: 16px;
+  font-size: var(--font-size-20);
+  font-weight: 700;
+  line-height: 32px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 15%);
 }
 
 .comments {
   background-color: var(--white);
-  color: var(--gray-80);
-  border-radius: 10px;
+  color: var(--grey-90);
+  block-size: 32px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   font-weight: bold;
-  padding: 0 5px;
+  padding: 0 var(--spacing-2);
   gap: 5px;
 
   mat-icon {

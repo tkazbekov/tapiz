@@ -56,7 +56,11 @@
   border-radius: var(--radius-6);
   text-align: center;
   font-size: var(--font-size-3);
-  font-weight: 500;
+  font-weight: 700;
   color: var(--black);
-  width: 28px;
+  min-inline-size: 32px;
+  block-size: 32px;
+  line-height: 32px;
+  padding-inline: var(--spacing-2);
+  margin-inline-start: var(--spacing-2);
 }
