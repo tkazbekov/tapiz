@@ -25,6 +25,27 @@
   </button>
 }
 
+@if (isAdmin() && boardMode() === 0) {
+  <button
+    type="button"
+    class="change-mode-button notes-hidden-toggle"
+    [title]="notesHiddenTitle()"
+    [disabled]="!notesHidden() && anonymousMode()"
+    (click)="toggleNotesHidden()">
+    @if (notesHidden()) {
+      <svg
+        lucideEye
+        size="16"></svg>
+      Reveal notes
+    } @else {
+      <svg
+        lucideEyeClosed
+        size="16"></svg>
+      Hide notes
+    }
+  </button>
+}
+
 @if (allowSwitchMode()) {
   <div class="change-mode-button-holder">
     @if (boardMode() === 0) {

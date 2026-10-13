@@ -74,6 +74,7 @@ import { LiveReactionWallComponent } from '../components/live-reaction/live-reac
 import { BoardShourtcutsDirective } from '../directives/board-shortcuts.directive';
 import { PopupPortalComponent } from '@tapiz/ui/popup/popup-portal.component';
 import { NotesVisibilityComponent } from '../components/notes-visibility/notes-visibility.component';
+import { NotesHiddenBannerComponent } from '../components/notes-hidden-banner/notes-hidden-banner.component';
 import { NoteHeightCalculatorComponent } from '../components/note/components/note-height-calculator/note-height-calculator.component';
 import { BoardDragDirective } from './directives/board-drag.directive';
 import { BoardHeaderOptionsComponent } from '../components/board-header-options/board-header-options.component';
@@ -120,6 +121,7 @@ import { PingWallComponent } from '../components/ping/ping-wall.component';
     LiveReactionWallComponent,
     PopupPortalComponent,
     NotesVisibilityComponent,
+    NotesHiddenBannerComponent,
     NoteHeightCalculatorComponent,
     BoardHeaderOptionsComponent,
     TimerComponent,
@@ -217,6 +219,8 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   anonymousMode = computed(() => {
     return this.#boardFacade.settings()?.content.anonymousMode;
   });
+
+  notesHidden = this.boardFacade.notesHidden;
 
   workLayer = viewChild.required<ElementRef<HTMLElement>>('workLayer');
 

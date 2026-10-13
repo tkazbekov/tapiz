@@ -1,0 +1,25 @@
+:host {
+  align-items: center;
+  backdrop-filter: blur(90px);
+  background: var(--blur-bg);
+  border-radius: var(--radius-6);
+  color: var(--grey-90);
+  display: flex;
+  font-size: var(--font-size-1);
+  gap: var(--spacing-2);
+  inset-block-start: calc(1rem + 65px + var(--spacing-2));
+  inset-inline-start: 50%;
+  max-inline-size: calc(100vw - 2rem);
+  padding: var(--spacing-2) var(--spacing-4);
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: var(--board-tools-layer);
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  button {
+    flex-shrink: 0;
+  }
+}

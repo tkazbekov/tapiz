@@ -55,6 +55,9 @@
   @defer {
     <tapiz-header />
     <tapiz-board-header-options [allowSwitchMode]="isAdmin()" />
+    @if (notesHidden()) {
+      <tapiz-notes-hidden-banner />
+    }
     <tapiz-users />
     @if (!isReadonlyUser()) {
       <tapiz-board-toolbar />
@@ -105,7 +108,12 @@
     <tapiz-board-context-menu />
     <tapiz-portal-target name="node-toolbar" />
     <tapiz-comments />
-    @if (!isReadonlyUser() && boardMode() === 0 && !this.anonymousMode()) {
+    @if (
+      !isReadonlyUser() &&
+      boardMode() === 0 &&
+      !this.anonymousMode() &&
+      !notesHidden()
+    ) {
       <tapiz-notes-visibility />
     }
     <tapiz-zoom-control />

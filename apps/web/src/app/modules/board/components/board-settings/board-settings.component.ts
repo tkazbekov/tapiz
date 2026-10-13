@@ -19,11 +19,13 @@ import { MatInputModule } from '@angular/material/input';
 import { Store } from '@ngrx/store';
 import { BoardActions } from '../../actions/board.actions';
 import { BoardPageActions } from '../../actions/board-page.actions';
-import { uuid } from '@tapiz/utils/uuid';
+import { settingsAction } from './settings-action';
 import { BoardFacade } from '../../../../services/board-facade.service';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
 import { ColorPickerComponent } from '@tapiz/ui/color-picker';
 import { MatLabel } from '@angular/material/select';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { merge } from 'rxjs';
 
 export const defaultBackgroundColor = '#f7f6f7';
 export const defaultDotsColor = '#bfc6d7';
@@ -87,6 +89,28 @@ export const defaultDotsColor = '#bfc6d7';
           and all notes will be public. Additionally, the list and cursor
           indicating connected users will be hidden.</span
         >
+        @if (form.controls.notesHidden.value) {
+          <span class="help">Reveal the notes to use anonymous mode.</span>
+        }
+      </div>
+
+      <div class="field">
+        <mat-checkbox
+          color="primary"
+          formControlName="notesHidden">
+          <span class="label-text">Hide notes</span>
+        </mat-checkbox>
+        <span class="help"
+          >Everyone sees only the content of their own notes, the rest show as
+          blank cards until the notes are revealed. Votes and comments on hidden
+          notes wait for the reveal.</span
+        >
+        @if (form.controls.anonymousMode.value) {
+          <span class="help"
+            >Anonymous notes have no author, turn off anonymous mode to hide
+            notes.</span
+          >
+        }
       </div>
 
       <div class="field">
@@ -204,6 +228,7 @@ export class BoardSettingsComponent {
   form = new FormGroup({
     readOnly: new FormControl(false),
     anonymousMode: new FormControl(false),
+    notesHidden: new FormControl(false),
     hideNoteAuthor: new FormControl(false),
     allowPublicPosts: new FormControl(false),
     // empty is unlimited
@@ -236,6 +261,34 @@ export class BoardSettingsComponent {
         this.form.disable();
       }
     });
+
+    merge(
+      this.form.controls.anonymousMode.valueChanges,
+      this.form.controls.notesHidden.valueChanges,
+    )
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.#lockExclusiveModes());
+  }
+
+  // anonymous notes have no owner, so they couldn't be hidden from anyone
+  #lockExclusiveModes() {
+    if (!this.isAdmin()) {
+      return;
+    }
+
+    const { anonymousMode, notesHidden } = this.form.controls;
+
+    if (notesHidden.value) {
+      anonymousMode.disable({ emitEvent: false });
+    } else {
+      anonymousMode.enable({ emitEvent: false });
+    }
+
+    if (anonymousMode.value) {
+      notesHidden.disable({ emitEvent: false });
+    } else {
+      notesHidden.enable({ emitEvent: false });
+    }
   }
 
   submit() {
@@ -243,41 +296,12 @@ export class BoardSettingsComponent {
       return;
     }
 
-    const settings = this.#settings();
-
-    if (settings) {
-      this.#store.dispatch(
-        BoardActions.batchNodeActions({
-          history: false,
-          actions: [
-            {
-              data: {
-                type: 'settings',
-                id: settings.id,
-                content: this.form.value,
-              },
-              op: 'patch',
-            },
-          ],
-        }),
-      );
-    } else {
-      this.#store.dispatch(
-        BoardActions.batchNodeActions({
-          history: false,
-          actions: [
-            {
-              data: {
-                type: 'settings',
-                id: uuid(),
-                content: this.form.value,
-              },
-              op: 'add',
-            },
-          ],
-        }),
-      );
-    }
+    this.#store.dispatch(
+      BoardActions.batchNodeActions({
+        history: false,
+        actions: [settingsAction(this.#settings(), this.form.value)],
+      }),
+    );
 
     this.#dialogRef.close();
   }

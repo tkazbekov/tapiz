@@ -18,6 +18,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { BoardFacade } from '../../../../services/board-facade.service';
 import { BoardMembersComponent } from '../board-members/board-members.component';
 import { UserNotificationsComponent } from '../../../home/components/user-notifications/users-notifications.component';
+import { LucideEye, LucideEyeClosed } from '@lucide/angular';
+import { BoardActions } from '../../actions/board.actions';
+import { settingsAction } from '../board-settings/settings-action';
 
 @Component({
   selector: 'tapiz-board-header-options',
@@ -29,6 +32,8 @@ import { UserNotificationsComponent } from '../../../home/components/user-notifi
     MatDialogModule,
     MatButtonModule,
     UserNotificationsComponent,
+    LucideEye,
+    LucideEyeClosed,
   ],
 })
 export class BoardHeaderOptionsComponent {
@@ -63,6 +68,23 @@ export class BoardHeaderOptionsComponent {
     return !this.#settings()?.content.anonymousMode;
   });
 
+  notesHidden = this.#boardFacade.notesHidden;
+
+  // anonymous notes have no owner, so they can't be hidden
+  anonymousMode = computed(() => {
+    return !!this.#settings()?.content.anonymousMode;
+  });
+
+  notesHiddenTitle = computed(() => {
+    if (this.notesHidden()) {
+      return "Show everyone's notes";
+    }
+
+    return this.anonymousMode()
+      ? 'Turn off anonymous mode to hide notes'
+      : "Hide everyone's notes until you reveal them";
+  });
+
   allowSwitchMode = input(true);
 
   boardMode = this.#store.selectSignal(boardPageFeature.selectBoardMode);
@@ -77,6 +99,19 @@ export class BoardHeaderOptionsComponent {
     this.#store.dispatch(
       BoardPageActions.changeBoardMode({
         boardMode,
+      }),
+    );
+  }
+
+  toggleNotesHidden() {
+    this.#store.dispatch(
+      BoardActions.batchNodeActions({
+        history: false,
+        actions: [
+          settingsAction(this.#settings(), {
+            notesHidden: !this.notesHidden(),
+          }),
+        ],
       }),
     );
   }

@@ -53,6 +53,15 @@
   }
 }
 
+.notes-hidden-toggle {
+  gap: var(--spacing-2);
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
 .change-edit mat-icon {
   margin-inline-end: 2px;
 }
