@@ -2,15 +2,20 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
-  computed,
   effect,
   inject,
 } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 import { MatDialogModule, MatDialogRef } from '@angular/material/dialog';
-import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import {
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatInputModule } from '@angular/material/input';
 import { Store } from '@ngrx/store';
 import { BoardActions } from '../../actions/board.actions';
 import { BoardPageActions } from '../../actions/board-page.actions';
@@ -31,6 +36,7 @@ export const defaultDotsColor = '#bfc6d7';
     ReactiveFormsModule,
     MatButtonModule,
     MatCheckboxModule,
+    MatInputModule,
     ColorPickerComponent,
     MatLabel,
   ],
@@ -92,6 +98,24 @@ export const defaultDotsColor = '#bfc6d7';
         <span class="help"
           >When enabled, any user can make their posts public, not just admins
           and post owners.</span
+        >
+      </div>
+
+      <div class="field input-field">
+        <mat-form-field subscriptSizing="dynamic">
+          <mat-label>Votes per person</mat-label>
+          <input
+            matInput
+            type="number"
+            min="0"
+            max="999"
+            step="1"
+            placeholder="Unlimited"
+            formControlName="votesPerUser" />
+        </mat-form-field>
+        <span class="help"
+          >How many votes each person can spend on notes and groups. Leave it
+          empty for unlimited votes.</span
         >
       </div>
 
@@ -157,6 +181,7 @@ export const defaultDotsColor = '#bfc6d7';
           <button
             type="submit"
             color="primary"
+            [disabled]="form.invalid"
             mat-flat-button>
             Save
           </button>
@@ -172,9 +197,7 @@ export class BoardSettingsComponent {
   #boardFacade = inject(BoardFacade);
   #dialogRef = inject(MatDialogRef);
 
-  #settings = computed(() => {
-    return this.#boardFacade.nodes().find((it) => it.type === 'settings');
-  });
+  #settings = this.#boardFacade.settings;
 
   isAdmin = this.#store.selectSignal(boardPageFeature.selectIsAdmin);
 
@@ -183,6 +206,12 @@ export class BoardSettingsComponent {
     anonymousMode: new FormControl(false),
     hideNoteAuthor: new FormControl(false),
     allowPublicPosts: new FormControl(false),
+    // empty is unlimited
+    votesPerUser: new FormControl<number | null>(null, [
+      Validators.min(0),
+      Validators.max(999),
+      Validators.pattern(/^\d*$/),
+    ]),
     backgroundColor: new FormControl(defaultBackgroundColor, {
       nonNullable: true,
     }),
@@ -194,7 +223,11 @@ export class BoardSettingsComponent {
       const settings = this.#settings();
 
       if (settings) {
-        this.form.patchValue(settings.content);
+        this.form.patchValue({
+          ...settings.content,
+          // 0 is unlimited too, shown as an empty field
+          votesPerUser: settings.content.votesPerUser || null,
+        });
       }
     });
 
@@ -206,6 +239,10 @@ export class BoardSettingsComponent {
   }
 
   submit() {
+    if (this.form.invalid) {
+      return;
+    }
+
     const settings = this.#settings();
 
     if (settings) {

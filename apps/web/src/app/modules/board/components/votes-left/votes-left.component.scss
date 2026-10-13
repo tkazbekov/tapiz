@@ -1,0 +1,15 @@
+:host {
+  align-items: center;
+  background: var(--accent-purple-light);
+  border-radius: 999px;
+  color: var(--grey-90);
+  display: flex;
+  font-weight: 600;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3);
+  white-space: nowrap;
+}
+
+:host(.empty) {
+  background: var(--accent-red-light);
+}

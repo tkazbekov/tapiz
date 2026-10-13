@@ -51,6 +51,12 @@
   }
 }
 
+.input-field {
+  .help {
+    padding-inline-start: 0;
+  }
+}
+
 .action-field {
   .action-field-content {
     display: flex;

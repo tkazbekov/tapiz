@@ -52,6 +52,7 @@ import { LucidePin, LucidePinOff } from '@lucide/angular';
 import { ArrowToolbarComponent } from '../arrows/arrow-toolbar/arrow-toolbar.component';
 import { PingStore } from '../ping/ping.store';
 import { TopVotedComponent } from '../top-voted/top-voted.component';
+import { VotesLeftComponent } from '../votes-left/votes-left.component';
 import { appFeature } from '../../../../+state/app.reducer';
 
 export class AppModule {}
@@ -72,6 +73,7 @@ export class AppModule {}
     NotesComponent,
     ToolsComponent,
     TopVotedComponent,
+    VotesLeftComponent,
     NgTemplateOutlet,
     BoardToolbardButtonComponent,
     LucidePin,
@@ -109,6 +111,7 @@ export class BoardToolbarComponent {
       'live-reaction',
       'top-voted',
       'image',
+      'vote',
     ];
 
     return withPopup.includes(this.popup());

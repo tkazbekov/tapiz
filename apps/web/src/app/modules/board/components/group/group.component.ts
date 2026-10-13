@@ -18,11 +18,11 @@ import { ResizeHandlerSingleComponent } from '@tapiz/ui/resize';
 import { hostBinding } from 'ngxtension/host-binding';
 import { explicitEffect } from 'ngxtension/explicit-effect';
 import { NodesStore } from '../../services/nodes.store';
+import { VotesService } from '../../services/votes.service';
 import { BoardActions } from '@tapiz/board-commons/actions/board.actions';
 import { NodeStore } from '../../services/node.store';
 import { MultiDragService } from '@tapiz/cdk/services/multi-drag.service';
 import { input } from '@angular/core';
-import { BoardFacade } from '../../../../services/board-facade.service';
 import { boardPageFeature } from '../../reducers/boardPage.reducer';
 
 @Component({
@@ -67,7 +67,7 @@ export class GroupComponent {
   #el = inject(ElementRef);
   #multiDragService = inject(MultiDragService);
   #destroyRef = inject(DestroyRef);
-  #boardFacade = inject(BoardFacade);
+  #votesService = inject(VotesService);
   #activeToolbarOption = this.#store.selectSignal(
     boardPageFeature.selectPopupOpen,
   );
@@ -97,7 +97,6 @@ export class GroupComponent {
   });
 
   textarea = viewChild<ElementRef<HTMLTextAreaElement>>('textarea');
-  userId = this.#boardFacade.userId;
   edit = signal(false);
   editText = signal('');
 
@@ -149,54 +148,7 @@ export class GroupComponent {
       event.stopPropagation();
     }
     if (this.voting()) {
-      let votes = this.node().content.votes;
-
-      let currentUserVote = votes.find((vote) => vote.userId === this.userId());
-
-      if (currentUserVote) {
-        votes = votes.map((vote) => {
-          if (vote.userId === this.userId()) {
-            return {
-              ...vote,
-              vote: event.button === 2 ? vote.vote - 1 : vote.vote + 1,
-            };
-          }
-
-          return vote;
-        });
-      } else {
-        votes = [
-          ...votes,
-          {
-            userId: this.userId(),
-            vote: event.button === 2 ? -1 : 1,
-          },
-        ];
-      }
-
-      currentUserVote = votes.find((vote) => vote.userId === this.userId());
-
-      votes = votes.filter((vote) => vote.vote !== 0);
-
-      if (currentUserVote && currentUserVote.vote >= 0) {
-        this.#store.dispatch(
-          BoardActions.batchNodeActions({
-            history: true,
-            actions: [
-              {
-                data: {
-                  type: 'group',
-                  id: this.node().id,
-                  content: {
-                    votes,
-                  },
-                },
-                op: 'patch',
-              },
-            ],
-          }),
-        );
-      }
+      this.#votesService.vote(this.node(), 'group', event);
     } else {
       this.#nodesStore.setFocusNode({
         id: this.node().id,

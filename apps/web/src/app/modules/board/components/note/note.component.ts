@@ -28,6 +28,7 @@ import { DrawingDirective, DrawingStore } from '../drawing';
 import { HistoryService } from '../../services/history.service';
 import { MatIconModule } from '@angular/material/icon';
 import { NodesStore } from '../../services/nodes.store';
+import { VotesService } from '../../services/votes.service';
 import { CommentsStore } from '../comments/comments.store';
 import { BoardActions } from '@tapiz/board-commons/actions/board.actions';
 import { hostBinding } from 'ngxtension/host-binding';
@@ -91,6 +92,7 @@ export class NoteComponent {
   #nodeStore = inject(NodeStore);
   #hotkeysService = inject(HotkeysService);
   #boardFacade = inject(BoardFacade);
+  #votesService = inject(VotesService);
   #zoom = this.#store.selectSignal(boardPageFeature.selectZoom);
   #appUser = this.#store.selectSignal(appFeature.selectUser);
   dropAnimation = signal(false);
@@ -396,7 +398,7 @@ export class NoteComponent {
     }
 
     if (this.voting()) {
-      this.#voteEvent(event);
+      this.#votesService.vote(this.node(), 'note', event);
     } else if (this.emojiMode()) {
       this.#emojiEvent(event);
     } else {
@@ -513,57 +515,6 @@ export class NoteComponent {
 
   onMention(userId: string) {
     this.#nodesStore.mentionUser(userId, this.node().id);
-  }
-
-  #voteEvent(event: MouseEvent) {
-    let votes = this.node().content.votes;
-
-    let currentUserVote = votes.find((vote) => vote.userId === this.userId());
-
-    if (currentUserVote) {
-      votes = votes.map((vote) => {
-        if (vote.userId === this.userId()) {
-          return {
-            ...vote,
-            vote: event.button === 2 ? vote.vote - 1 : vote.vote + 1,
-          };
-        }
-
-        return vote;
-      });
-    } else {
-      votes = [
-        ...votes,
-        {
-          userId: this.userId(),
-          vote: event.button === 2 ? -1 : 1,
-        },
-      ];
-    }
-
-    currentUserVote = votes.find((vote) => vote.userId === this.userId());
-
-    votes = votes.filter((vote) => vote.vote !== 0);
-
-    if (currentUserVote && currentUserVote.vote >= 0) {
-      this.#store.dispatch(
-        BoardActions.batchNodeActions({
-          history: true,
-          actions: [
-            {
-              data: {
-                type: 'note',
-                id: this.node().id,
-                content: {
-                  votes,
-                },
-              },
-              op: 'patch',
-            },
-          ],
-        }),
-      );
-    }
   }
 
   #emojiEvent(event: MouseEvent) {
