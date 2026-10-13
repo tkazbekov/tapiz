@@ -31,6 +31,11 @@ import { NodesActions } from '../../services/nodes-actions';
 import Pickr from '@simonwep/pickr';
 import { colorPickerConfig } from '@tapiz/ui/color-picker/color-picker.config';
 import { defaultNoteColor } from '../note';
+import { appFeature } from '../../../../+state/app.reducer';
+import {
+  SaveTemplateDialogComponent,
+  SaveTemplateDialogData,
+} from '../template-selector/save-template-dialog.component';
 
 @Component({
   selector: 'tapiz-board-context-menu',
@@ -61,6 +66,10 @@ export class BoardContextMenuComponent implements OnInit {
     boardPageFeature.selectPopupOpen,
   );
   private isAdmin = this.store.selectSignal(boardPageFeature.selectIsAdmin);
+  private isGuest = this.store.selectSignal(appFeature.selectIsGuest);
+  private boardId = this.store.selectSignal(boardPageFeature.selectBoardId);
+  private teamId = this.store.selectSignal(boardPageFeature.selectTeamId);
+  private teamName = this.store.selectSignal(boardPageFeature.selectTeamName);
 
   public readonly boardMode = this.store.selectSignal(
     boardPageFeature.selectBoardMode,
@@ -148,6 +157,17 @@ export class BoardContextMenuComponent implements OnInit {
                     };
                   }),
                 );
+              },
+            });
+          }
+
+          // templates belong to accounts, and masked notes are never saved
+          if (!allMasked && !this.isGuest()) {
+            actions.push({
+              label: 'Save as template…',
+              icon: 'bookmark_add',
+              action: () => {
+                this.openSaveTemplate(currentNodes.map((node) => node.id));
               },
             });
           }
@@ -379,5 +399,16 @@ export class BoardContextMenuComponent implements OnInit {
         ];
       },
     });
+  }
+
+  private openSaveTemplate(nodeIds: string[]) {
+    const teamId = this.teamId();
+    const data: SaveTemplateDialogData = {
+      boardId: this.boardId(),
+      nodeIds,
+      team: teamId ? { id: teamId, name: this.teamName() } : null,
+    };
+
+    this.dialog.open(SaveTemplateDialogComponent, { data });
   }
 }

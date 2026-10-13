@@ -1,0 +1,91 @@
+:host {
+  display: block;
+  max-inline-size: calc(600px + var(--spacing-2));
+}
+
+h3 {
+  margin-block: var(--spacing-4) var(--spacing-2);
+}
+
+.hint {
+  margin-block: var(--spacing-4) 0;
+  color: var(--grey-60);
+}
+
+.templates {
+  display: grid;
+  grid-template-columns: repeat(2, 300px);
+  gap: var(--spacing-2);
+}
+
+.card {
+  position: relative;
+}
+
+.insert {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  inline-size: 100%;
+
+  .preview {
+    border-radius: var(--radius-2);
+    background: var(--grey-10);
+  }
+
+  .no-preview {
+    display: grid;
+    place-items: center;
+    inline-size: 300px;
+    block-size: 180px;
+    color: var(--grey-60);
+  }
+
+  p {
+    margin: 0;
+    margin-block-start: var(--spacing-2);
+  }
+}
+
+.delete {
+  position: absolute;
+  inset-block-start: var(--spacing-1);
+  inset-inline-end: var(--spacing-1);
+  display: grid;
+  place-items: center;
+  padding: var(--spacing-1);
+  border-radius: 50%;
+  background: var(--white);
+  opacity: 0.85;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.panel {
+  fill: var(--white);
+  stroke: #868e96;
+  stroke-width: 1.5;
+}
+
+.note {
+  stroke: rgba(0, 0, 0, 0.15);
+  stroke-width: 1;
+}
+
+.text {
+  fill: #adb5bd;
+}
+
+.other {
+  fill: rgba(134, 142, 150, 0.15);
+  stroke: #adb5bd;
+  stroke-dasharray: 3 2;
+  stroke-width: 1;
+}
+
+.line {
+  stroke: #495057;
+  stroke-width: 1.5;
+}

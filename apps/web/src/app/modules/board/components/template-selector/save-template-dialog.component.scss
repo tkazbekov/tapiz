@@ -1,0 +1,26 @@
+:host {
+  padding: 1rem;
+  display: block;
+  min-inline-size: min(400px, 80vw);
+}
+
+h1 {
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-block-start: var(--spacing-4);
+}
+
+.error {
+  margin-block: 0 var(--spacing-4);
+  color: var(--error);
+}

@@ -8,3 +8,4 @@ export * from './insert-positions.js';
 export * from './layout-spec.js';
 export * from './expand.js';
 export * from './lint.js';
+export * from './from-legacy.js';
