@@ -575,6 +575,32 @@ describe('ws', () => {
       return { board, admin, other, noteId };
     };
 
+    it('broadcasts the votes stored when the batch is sent', async () => {
+      const { admin, other, noteId } = await votingBoard(45, 46);
+      const adminId = getAuth(45).sub;
+      const otherId = getAuth(46).sub;
+
+      const frames: string[] = [];
+      admin.on('board', (msg: unknown) => frames.push(JSON.stringify(msg)));
+
+      // the member's vote is queued for the admin, then the admin votes
+      // before that batch goes out
+      other.emit('board', voteOn(noteId, [{ userId: otherId, vote: 1 }]));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      admin.emit('board', voteOn(noteId, [{ userId: adminId, vote: 1 }]));
+
+      await vi.waitFor(() => {
+        expect(frames.some((it) => it.includes('State action'))).toEqual(true);
+      });
+
+      const broadcast = frames.find((it) => it.includes('State action'));
+
+      expect(broadcast).toContain(`{"userId":"${adminId}","vote":1}`);
+
+      admin.close();
+      other.close();
+    });
+
     it('keeps concurrent votes of two users', async () => {
       const { board, admin, other, noteId } = await votingBoard(27, 28);
       const adminId = getAuth(27).sub;

@@ -61,6 +61,10 @@ export class VotesService {
   ) {
     const userId = this.#boardFacade.userId();
     const delta = event.button === 2 ? -1 : 1;
+    // the component input can lag behind fast clicks, the board can't
+    node =
+      (this.#boardFacade.nodes().find((it) => it.id === node.id) as
+        typeof node | undefined) ?? node;
     const vote = ownVotes(node.content.votes, userId) + delta;
 
     if (vote < 0) {
@@ -168,12 +172,11 @@ export class VotesService {
     });
   }
 
-  // the server's stored votes for our own actions are authoritative
+  // The server's stored votes for our own actions are authoritative. A
+  // broadcast queued before our vote landed can still follow, so the
+  // corrected entry stays protected like a vote we just sent.
   applyCorrections(actions: StateActions[]) {
-    actions.filter(isVotesAction).forEach((action) => {
-      this.#pending.delete(action.data.id);
-    });
-
     this.#boardFacade.applyActions(actions);
+    this.markSent(actions);
   }
 }

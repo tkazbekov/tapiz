@@ -542,7 +542,10 @@ export class Client {
     this.pendingMsgs.set(boardId, [msg]);
 
     setTimeout(() => {
-      const msgs = this.pendingMsgs.get(boardId) ?? [];
+      const msgs = this.withStoredVotes(
+        boardId,
+        this.pendingMsgs.get(boardId) ?? [],
+      );
 
       this.pendingMsgs.delete(boardId);
 
@@ -554,6 +557,64 @@ export class Client {
         this.socket.to(boardId).emit('board', msgs);
       }
     }, 50);
+  }
+
+  // Votes can change while a batch waits to be sent; send the stored ones,
+  // or a receiver could get an older value of its own vote.
+  private withStoredVotes(boardId: string, msgs: unknown[]) {
+    const board = this.server.getBoard(boardId);
+
+    if (!board) {
+      return msgs;
+    }
+
+    const storedVotes = (action: StateActions) => {
+      if (
+        action.op === 'remove' ||
+        action.parent ||
+        (action.data.type !== 'note' && action.data.type !== 'group')
+      ) {
+        return null;
+      }
+
+      const content = action.data.content as { votes?: unknown } | undefined;
+
+      if (!Array.isArray(content?.votes)) {
+        return null;
+      }
+
+      const node = board.find((it) => it.id === action.data.id);
+      const votes = (node?.content as { votes?: unknown } | undefined)?.votes;
+
+      return Array.isArray(votes) ? votes : null;
+    };
+
+    return msgs.map((msg) => {
+      const { type, data } = msg as { type?: string; data?: unknown };
+
+      if (type !== BoardCommonActions.stateAction || !Array.isArray(data)) {
+        return msg;
+      }
+
+      return {
+        ...(msg as object),
+        data: (data as StateActions[]).map((action) => {
+          const votes = storedVotes(action);
+
+          if (!votes || action.op === 'remove') {
+            return action;
+          }
+
+          return {
+            ...action,
+            data: {
+              ...action.data,
+              content: { ...action.data.content, votes },
+            },
+          } as StateActions;
+        }),
+      };
+    });
   }
 
   private updateStateWithActions(actions: StateActions[]) {

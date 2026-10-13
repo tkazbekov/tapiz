@@ -179,17 +179,37 @@ describe('VotesService', () => {
       expect(service.mergeIncoming(incoming)).toEqual(incoming);
     });
 
-    it('applies corrections and stops keeping the own entry', () => {
-      nodes.set([note('n1', [{ userId: 'me', vote: 3 }])]);
-      service.markSent([patch([{ userId: 'me', vote: 3 }])]);
-
+    it('keeps a corrected own entry from later stale broadcasts', () => {
       const correction = [patch([{ userId: 'me', vote: 2 }])];
+      applyActions.mockImplementation(() =>
+        nodes.set([note('n1', [{ userId: 'me', vote: 2 }])]),
+      );
+
       service.applyCorrections(correction);
 
       expect(applyActions).toHaveBeenCalledWith(correction);
 
-      const incoming = [patch([{ userId: 'me', vote: 2 }])];
-      expect(service.mergeIncoming(incoming)).toEqual(incoming);
+      // another user's vote, queued before ours was stored
+      const merged = service.mergeIncoming([
+        patch([
+          { userId: 'me', vote: 1 },
+          { userId: 'other', vote: 1 },
+        ]),
+      ]);
+
+      expect(incomingVotes(merged)).toEqual([
+        { userId: 'other', vote: 1 },
+        { userId: 'me', vote: 2 },
+      ]);
+    });
+
+    it('counts fast clicks from the latest board state', () => {
+      nodes.set([note('n1', [{ userId: 'me', vote: 2 }])]);
+
+      // a component input that hasn't caught up with the last click
+      service.vote(note('n1', [{ userId: 'me', vote: 1 }]), 'note', click(0));
+
+      expect(dispatchedVotes()).toEqual([[{ userId: 'me', vote: 3 }]]);
     });
   });
 });
