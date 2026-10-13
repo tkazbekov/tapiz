@@ -12,6 +12,8 @@ Tapiz has its own email and password accounts, hashed DB sessions, and link gues
 
 Registration order in `init-server.ts` matters: cookie, CORS (so 429s carry CORS headers), the CSRF and principal hooks, then the IP-keyed rate limiter, all on the root before child plugins. Otherwise `req.principal` is missing in `fileUpload` or tRPC.
 
+Websocket events are throttled per socket (`ws-rate-limit.ts`, attached in `Server.connection`): excess events are dropped and sockets that keep flooding are disconnected. MCP calls `processMsg` directly and relies on the HTTP rate limit instead.
+
 ## Tiers
 
 - `participantProcedure`: accounts and guests (`user`, `settings`, `notifications`).

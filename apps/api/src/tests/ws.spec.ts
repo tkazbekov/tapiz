@@ -320,6 +320,20 @@ describe('ws', () => {
     [mover, watcherA, watcherB].forEach((tab) => tab.close());
   });
 
+  it('disconnects sockets that flood events', async () => {
+    const tab = await connect('tapiz_session=64');
+    let disconnected = false;
+    tab.on('disconnect', () => (disconnected = true));
+
+    for (let i = 0; i < 300; i++) {
+      tab.emit('correlationId', `flood-${i}`);
+    }
+
+    await vi.waitFor(() => {
+      expect(disconnected).toEqual(true);
+    });
+  });
+
   it('joining again after a reconnect restores board events', async () => {
     const caller = await getUserCaller(7);
     const board = await caller.board.create({ name: 'reconnect' });

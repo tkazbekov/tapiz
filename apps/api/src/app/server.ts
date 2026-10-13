@@ -8,6 +8,7 @@ import {
 } from '@tapiz/board-commons';
 import type { Socket, Server as WsServer } from 'socket.io';
 import { Client, type ClientIdentity } from './client.js';
+import { createWsRateLimiter } from './ws-rate-limit.js';
 import db from './db/index.js';
 
 import { syncNodeBox } from '@tapiz/sync-node-box';
@@ -92,6 +93,13 @@ export class Server {
       socket.disconnect(true);
       return;
     }
+
+    socket.use(
+      createWsRateLimiter(() => {
+        console.warn('Disconnecting a socket flooding events', identity.id);
+        socket.disconnect(true);
+      }),
+    );
 
     const client = new Client(socket, this, identity);
 
