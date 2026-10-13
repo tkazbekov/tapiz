@@ -1,5 +1,7 @@
 import {
   BoardCommonActions,
+  isNotesHidden,
+  maskNodesForViewer,
   StateActions,
   TuNode,
   UserNode,
@@ -348,8 +350,16 @@ export class Client {
       return [];
     }
 
+    const wasHidden = isNotesHidden(settings);
+
     this.updateStateWithActions(actions);
     this.sendAll(this.boardId, this.getStateAction(actions));
+
+    if (
+      isNotesHidden(this.server.getBoardSettings(this.boardId)) !== wasHidden
+    ) {
+      this.server.resyncBoard(this.boardId);
+    }
 
     return actions;
   }
@@ -475,7 +485,9 @@ export class Client {
       this.socket.join(`board:${boardId}`);
 
       this.sendToClient(
-        this.getSetStateAction(this.server.getBoard(boardId) ?? board),
+        this.getSetStateAction(
+          maskNodesForViewer(this.server.getBoard(boardId) ?? board, this.id),
+        ),
       );
     } catch (e) {
       logError(e);
@@ -530,8 +542,14 @@ export class Client {
       const msgs = this.pendingMsgs.get(boardId) ?? [];
 
       this.pendingMsgs.delete(boardId);
-      // send to all users in boardId but client
-      this.socket.to(boardId).emit('board', msgs);
+
+      // send to all users in boardId but client, masked at send time so a
+      // batch queued before notes were hidden goes out hidden
+      if (this.server.needsMasking(boardId, msgs)) {
+        this.server.emitMasked(boardId, msgs, this.socket.id);
+      } else {
+        this.socket.to(boardId).emit('board', msgs);
+      }
     }, 50);
   }
 

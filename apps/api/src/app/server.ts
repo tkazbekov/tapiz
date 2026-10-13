@@ -1,6 +1,9 @@
 import {
   BoardCommonActions,
+  isNotesHidden,
   isUserNode,
+  maskActionsForViewer,
+  maskNodesForViewer,
   type BoardSettings,
   type StateActions,
   type TuNode,
@@ -51,6 +54,13 @@ export function attachBoardSockets(
     server.connection(socket, cookiesOf(socket));
   });
 }
+
+const isStateActionMessage = (
+  msg: unknown,
+): msg is { type: string; data: StateActions[] } =>
+  (msg as { type?: unknown } | undefined)?.type ===
+    BoardCommonActions.stateAction &&
+  Array.isArray((msg as { data?: unknown }).data);
 
 export class Server {
   public clients: Client[] = [];
@@ -236,6 +246,12 @@ export class Server {
 
   public getBoardSettings(boardId: string) {
     if (!this.boardSettings[boardId]) {
+      // nothing to cache until the board loads, or the empty settings would
+      // outlive the load
+      if (!this.state[boardId]) {
+        return {};
+      }
+
       this.boardSettings[boardId] = this.findBoardSettings(boardId);
     }
 
@@ -395,6 +411,89 @@ export class Server {
     }
 
     return newState;
+  }
+
+  // while notes are hidden, note actions and their comments are sent to each
+  // socket masked for its user
+  public needsMasking(boardId: string, msgs: unknown[]) {
+    const hasNotes = msgs.some(
+      (msg) =>
+        isStateActionMessage(msg) &&
+        msg.data.some((action) => action.data.type === 'note' || action.parent),
+    );
+
+    // a board that isn't loaded can't tell, so emitMasked drops its notes
+    if (!this.getBoard(boardId)) {
+      return hasNotes;
+    }
+
+    return hasNotes && isNotesHidden(this.getBoardSettings(boardId));
+  }
+
+  // sends to every socket in the board room but the sender's
+  public emitMasked(boardId: string, msgs: unknown[], senderSocketId?: string) {
+    const nodes = this.getBoard(boardId);
+    const sockets = this.io.of('/').adapter.rooms.get(boardId);
+
+    if (!nodes || !sockets) {
+      return;
+    }
+
+    const clients = new Map(this.clients.map((it) => [it.socket.id, it]));
+    // one view per user, shared by its tabs
+    const views = new Map<string, unknown[]>();
+
+    const viewOf = (viewerId: string) =>
+      msgs.flatMap((msg) => {
+        if (!isStateActionMessage(msg)) {
+          return [msg];
+        }
+
+        const data = maskActionsForViewer(msg.data, nodes, viewerId);
+
+        return data.length ? [{ ...msg, data }] : [];
+      });
+
+    sockets.forEach((socketId) => {
+      const viewer = clients.get(socketId);
+
+      // a socket without a known user gets nothing rather than everything
+      if (socketId === senderSocketId || !viewer) {
+        return;
+      }
+
+      const view = views.get(viewer.id) ?? viewOf(viewer.id);
+
+      views.set(viewer.id, view);
+
+      if (view.length) {
+        this.io.to(socketId).emit('board', view);
+      }
+    });
+  }
+
+  // hiding or revealing notes changes what every user may see
+  public resyncBoard(boardId: string) {
+    const nodes = this.getBoard(boardId);
+
+    if (!nodes) {
+      return;
+    }
+
+    const views = new Map<string, TuNode[]>();
+
+    this.clients
+      .filter((client) => client.boardId === boardId)
+      .forEach((client) => {
+        const view =
+          views.get(client.id) ?? maskNodesForViewer(nodes, client.id);
+
+        views.set(client.id, view);
+        client.sendToClient({
+          type: BoardCommonActions.resyncState,
+          data: view,
+        });
+      });
   }
 
   public updateBoardName(boardId: string, name: string) {

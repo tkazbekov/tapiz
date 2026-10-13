@@ -658,6 +658,380 @@ describe('ws', () => {
     });
   });
 
+  describe('hidden notes', () => {
+    const noteContent = (ownerId: string, text: string) => ({
+      text,
+      position: { x: 0, y: 0 },
+      layer: 0,
+      ownerId,
+      votes: [],
+      emojis: [],
+      drawing: [],
+      width: 240,
+      height: 160,
+      color: '#fee2e2',
+    });
+
+    const addNote = (
+      ws: typeof socket,
+      id: string,
+      ownerId: string,
+      text: string,
+    ) =>
+      sendFrom(ws, [
+        {
+          op: 'add',
+          data: { id, type: 'note', content: noteContent(ownerId, text) },
+        },
+      ]);
+
+    const framesOf = (ws: typeof socket) => {
+      const frames: string[] = [];
+      ws.on('board', (msg: unknown) => frames.push(JSON.stringify(msg)));
+
+      return frames;
+    };
+
+    const messagesOf = (frames: string[], type: string) =>
+      frames
+        .flatMap(
+          (frame) => JSON.parse(frame) as { type: string; data: unknown }[],
+        )
+        .filter((msg) => msg.type === type);
+
+    const nodeIn = (nodes: unknown, id: string) =>
+      (nodes as TuNode<Record<string, unknown>>[]).find((it) => it.id === id);
+
+    const stored = (boardId: string, id: string) =>
+      wsServer.getBoard(boardId)?.find((it) => it.id === id)?.content as
+        Record<string, unknown> | undefined;
+
+    const setHidden = async (
+      ws: typeof socket,
+      boardId: string,
+      notesHidden: boolean,
+    ) => {
+      const settings = wsServer
+        .getBoard(boardId)
+        ?.find((it) => it.type === 'settings');
+
+      await sendFrom(ws, [
+        {
+          op: settings ? 'patch' : 'add',
+          data: {
+            id: settings?.id ?? randomUUID(),
+            type: 'settings',
+            content: { notesHidden },
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(wsServer.getBoardSettings(boardId).notesHidden).toEqual(
+          notesHidden,
+        );
+      });
+    };
+
+    // admin (two tabs) and a member on a public board, with one admin note
+    const hiddenBoard = async (owner: number, member: number, hide = true) => {
+      const caller = await getUserCaller(owner);
+      const board = await caller.board.create({ name: 'hidden notes' });
+      await caller.board.changePrivacy({ boardId: board.id, isPublic: true });
+
+      const admin = await connect(`tapiz_session=${owner}`);
+      const adminTab = await connect(`tapiz_session=${owner}`);
+      const other = await connect(`tapiz_session=${member}`);
+
+      for (const ws of [admin, adminTab, other]) {
+        await sendFrom(ws, { action: 'join', boardId: board.id });
+      }
+
+      const noteId = randomUUID();
+
+      await addNote(admin, noteId, getAuth(owner).sub, 'secret-a');
+
+      await vi.waitFor(() => {
+        expect(stored(board.id, noteId)?.['text']).toEqual('secret-a');
+      });
+
+      if (hide) {
+        await setHidden(admin, board.id, true);
+      }
+
+      const close = () => [admin, adminTab, other].forEach((ws) => ws.close());
+
+      return { board, admin, adminTab, other, noteId, close };
+    };
+
+    it('sends the content of a hidden note to its owner only', async () => {
+      const { board, admin, adminTab, other, noteId, close } =
+        await hiddenBoard(33, 34);
+      const adminId = getAuth(33).sub;
+      const otherId = getAuth(34).sub;
+      const seenByAdmin = framesOf(admin);
+      const seenByTab = framesOf(adminTab);
+      const seenByOther = framesOf(other);
+      const otherNote = randomUUID();
+
+      await addNote(other, otherNote, otherId, 'secret-b');
+
+      await vi.waitFor(() => {
+        expect(seenByAdmin.some((it) => it.includes(otherNote))).toEqual(true);
+      });
+      expect(seenByAdmin.join()).not.toContain('secret-b');
+      expect(
+        nodeIn(
+          messagesOf(seenByAdmin, '[Board] State action').flatMap((msg) =>
+            (msg.data as { data: TuNode }[]).map((it) => it.data),
+          ),
+          otherNote,
+        )?.content,
+      ).toMatchObject({ text: '', ownerId: otherId });
+
+      // the owner's text patch reaches the other tab, but not its text
+      await sendFrom(admin, [
+        {
+          op: 'patch',
+          data: {
+            id: noteId,
+            type: 'note',
+            content: { text: 'secret-a2', position: { x: 50, y: 50 } },
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(seenByTab.join()).toContain('secret-a2');
+        expect(
+          seenByOther.some(
+            (it) => it.includes(noteId) && it.includes('"x":50'),
+          ),
+        ).toEqual(true);
+      });
+      expect(seenByOther.join()).not.toContain('secret-a');
+
+      // a text-only patch doesn't reach others at all
+      await sendFrom(admin, [
+        {
+          op: 'patch',
+          data: { id: noteId, type: 'note', content: { text: 'secret-a3' } },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(seenByTab.join()).toContain('secret-a3');
+      });
+      expect(seenByOther.join()).not.toContain('secret-a');
+
+      // a new tab loads a masked board
+      const otherTab = await connect('tapiz_session=34');
+      const snapshot = framesOf(otherTab);
+
+      await sendFrom(otherTab, { action: 'join', boardId: board.id });
+
+      await vi.waitFor(() => {
+        expect(messagesOf(snapshot, '[Board] Set state')).toHaveLength(1);
+      });
+
+      const [{ data: nodes }] = messagesOf(snapshot, '[Board] Set state');
+
+      expect(nodeIn(nodes, noteId)?.content).toMatchObject({
+        text: '',
+        ownerId: adminId,
+      });
+      expect(nodeIn(nodes, otherNote)?.content).toMatchObject({
+        text: 'secret-b',
+      });
+      expect(snapshot.join()).not.toContain('secret-a');
+
+      otherTab.close();
+      close();
+    });
+
+    it('lets others move a hidden note but not edit it', async () => {
+      const { board, other, noteId, close } = await hiddenBoard(35, 36);
+      const otherId = getAuth(36).sub;
+
+      await sendFrom(other, [
+        {
+          op: 'patch',
+          data: { id: noteId, type: 'note', content: { text: 'hijacked' } },
+        },
+      ]);
+      await sendFrom(other, [
+        {
+          op: 'patch',
+          data: {
+            id: noteId,
+            type: 'note',
+            content: { votes: [{ userId: otherId, vote: 1 }] },
+          },
+        },
+      ]);
+      await sendFrom(other, [
+        { op: 'remove', data: { id: noteId, type: 'note' } },
+      ]);
+      await sendFrom(other, [
+        {
+          op: 'patch',
+          data: {
+            id: noteId,
+            type: 'note',
+            content: { position: { x: 70, y: 80 }, width: 300 },
+          },
+        },
+      ]);
+
+      expect(stored(board.id, noteId)).toMatchObject({
+        text: 'secret-a',
+        votes: [],
+        position: { x: 70, y: 80 },
+        width: 300,
+      });
+
+      close();
+    });
+
+    it('resyncs every socket when notes are hidden or revealed', async () => {
+      const { board, admin, other, noteId, close } = await hiddenBoard(
+        37,
+        38,
+        false,
+      );
+      const seenByAdmin = framesOf(admin);
+      const seenByOther = framesOf(other);
+      const resyncs = (frames: string[]) =>
+        messagesOf(frames, '[Board] Resync state').map(
+          (msg) => nodeIn(msg.data, noteId)?.content['text'],
+        );
+
+      await setHidden(admin, board.id, true);
+
+      await vi.waitFor(() => {
+        expect(resyncs(seenByOther)).toEqual(['']);
+        expect(resyncs(seenByAdmin)).toEqual(['secret-a']);
+      });
+
+      await setHidden(admin, board.id, false);
+
+      await vi.waitFor(() => {
+        expect(resyncs(seenByOther)).toEqual(['', 'secret-a']);
+        expect(resyncs(seenByAdmin)).toEqual(['secret-a', 'secret-a']);
+      });
+
+      // other settings don't resync
+      await sendFrom(admin, [
+        {
+          op: 'patch',
+          data: {
+            id: wsServer
+              .getBoard(board.id)
+              ?.find((it) => it.type === 'settings')?.id,
+            type: 'settings',
+            content: { readOnly: false },
+          },
+        },
+      ]);
+
+      expect(resyncs(seenByOther)).toHaveLength(2);
+
+      close();
+    });
+
+    it('keeps notes hidden after the board reloads', async () => {
+      const { board, close } = await hiddenBoard(41, 42);
+
+      // the last leave empties the board; its user patches flush afterwards
+      close();
+
+      await vi.waitFor(() => {
+        expect(wsServer.getBoard(board.id)).toBeUndefined();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const admin = await connect('tapiz_session=41');
+      const other = await connect('tapiz_session=42');
+      await sendFrom(admin, { action: 'join', boardId: board.id });
+      await sendFrom(other, { action: 'join', boardId: board.id });
+
+      const seenByOther = framesOf(other);
+      const noteId = randomUUID();
+
+      await addNote(admin, noteId, getAuth(41).sub, 'secret-reloaded');
+
+      await vi.waitFor(() => {
+        expect(seenByOther.some((it) => it.includes(noteId))).toEqual(true);
+      });
+      expect(seenByOther.join()).not.toContain('secret-reloaded');
+
+      admin.close();
+      other.close();
+    });
+
+    it("doesn't broadcast notes of a board that isn't loaded", () => {
+      const action = (type: string) => ({
+        type: '[Board] State action',
+        data: [{ op: 'patch', data: { id: randomUUID(), type, content: {} } }],
+      });
+
+      expect(wsServer.needsMasking(randomUUID(), [action('note')])).toEqual(
+        true,
+      );
+      expect(wsServer.needsMasking(randomUUID(), [action('user')])).toEqual(
+        false,
+      );
+    });
+
+    it('keeps the comments of a hidden note from others', async () => {
+      const { board, admin, adminTab, other, noteId, close } =
+        await hiddenBoard(39, 40);
+      const seenByTab = framesOf(adminTab);
+      const seenByOther = framesOf(other);
+      const commentId = randomUUID();
+
+      await sendFrom(admin, [
+        {
+          op: 'add',
+          parent: noteId,
+          data: {
+            id: commentId,
+            type: 'comment',
+            content: {
+              text: 'secret-comment',
+              userId: getAuth(39).sub,
+              date: 1,
+            },
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(seenByTab.join()).toContain('secret-comment');
+      });
+      expect(seenByOther.join()).not.toContain(commentId);
+
+      // nor can others comment on it
+      await sendFrom(other, [
+        {
+          op: 'add',
+          parent: noteId,
+          data: {
+            id: randomUUID(),
+            type: 'comment',
+            content: { text: 'hi', userId: getAuth(40).sub, date: 1 },
+          },
+        },
+      ]);
+
+      expect(
+        wsServer.getBoard(board.id)?.find((it) => it.id === noteId)?.children,
+      ).toHaveLength(1);
+
+      close();
+    });
+  });
+
   it('removing an account revokes its single-member team boards', async () => {
     const owner = await getUserCaller(9);
     const team = await db.team.createTeam('solo team', getAuth(9).sub);
