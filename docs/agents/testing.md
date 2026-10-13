@@ -21,6 +21,8 @@ Use focused tests while iterating, then run the checks that cover the changed su
 - API lint: `pnpm exec nx lint api`
 - Shared board lint: `pnpm exec nx lint board-commons`
 
+API specs that call `startDB()` (`src/tests/*`, `mcp.spec.ts`, `schema.spec.ts`, `layout-service.spec.ts`) seed users and delete boards, so they refuse any database whose name does not end in `_test`. Create one once (`createdb tapiz_test`) and point the tests at it, either per run with `POSTGRES_DB=tapiz_test pnpm exec nx test api -- --run` or with an untracked root `.env.test.local` containing `POSTGRES_DB=tapiz_test`, which Nx loads for the test target only.
+
 When passing a test file to Nx/Vitest, use the path relative to that Nx project root. For example, from the workspace root use `src/app/validation.spec.ts` for `api`, not `apps/api/src/app/validation.spec.ts`.
 
 ## Coverage Expectations
