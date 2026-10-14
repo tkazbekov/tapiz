@@ -11,3 +11,16 @@ npm-debug.log
 node_modules
 
 dist
+
+# Keep runtime state and credentials out of image build contexts.
+/uploads
+/data
+/secrets
+/.secrets
+/coverage
+/tmp
+*.log
+**/.env*
+!**/.env.example
+/deploy/production/secrets
+/deploy/production/data

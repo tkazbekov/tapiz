@@ -20,7 +20,13 @@ RUN pnpm run config
 RUN pnpm nx run web:build:production
 
 FROM nginx:1.30-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Default remains the generic nginx config. Production may select its own file.
+ARG NGINX_CONFIG=nginx.conf
+ARG TRUSTED_PROXY_IP
+COPY ${NGINX_CONFIG} /tmp/tapiz-nginx.conf
+# Substitute ONLY the configured proxy address, preserving nginx's own variables.
+RUN envsubst '$TRUSTED_PROXY_IP' < /tmp/tapiz-nginx.conf > /etc/nginx/conf.d/default.conf \
+    && rm /tmp/tapiz-nginx.conf
 COPY --from=builder /home/tapiz/dist/apps/web /usr/share/nginx/html
 RUN touch /var/run/nginx.pid
 RUN chown -R nginx:nginx /var/run/nginx.pid /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d

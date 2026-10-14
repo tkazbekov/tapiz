@@ -1,0 +1,77 @@
+name: tapiz
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tapiz}
+      POSTGRES_USER: ${POSTGRES_USER:-tapiz_user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: ['./data/postgres:/var/lib/postgresql/data']
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+  api:
+    image: ${API_IMAGE:-tapiz-api:local}
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: [.env]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set the private database password}
+      POSTGRES_HOST: db
+      POSTGRES_PORT_HOST: '5432'
+      POSTGRES_DB: ${POSTGRES_DB:-tapiz}
+      POSTGRES_USER: ${POSTGRES_USER:-tapiz_user}
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: '8000'
+      UPLOADS_DIR: /home/tapiz/uploads
+      SESSION_COOKIE_SECURE: 'true'
+      AUTH_LOG_RESET_LINKS: 'false'
+      AI_AGENT_LOGIN_ENABLED: 'false'
+      TRUST_PROXY: '1'
+    volumes: ['./data/uploads:/home/tapiz/uploads']
+    init: true
+    mem_limit: 1g
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8000/api/auth/session').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  web:
+    image: ${WEB_IMAGE:-tapiz-web:local}
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile.web
+      args:
+        API_URL: ${API_URL:?Set the public HTTPS API URL}
+        WS_URL: ${WS_URL:?Set the public WSS URL}
+        NGINX_CONFIG: deploy/production/nginx.conf.template
+        TRUSTED_PROXY_IP: ${TRUSTED_PROXY_IP:?Set the exact tunnel connector IPv4 address}
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ['${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-4300}:80']
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null http://127.0.0.1/']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+secrets:
+  db_password:
+    file: ${DB_PASSWORD_FILE:-./secrets/db_password}
